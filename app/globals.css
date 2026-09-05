@@ -1,3 +1,58 @@
 @import "tailwindcss";
-:root { --background:#f6f7f4; --foreground:#141712; --surface:#fff; --surface-2:#f1f3ee; --muted:#6f756a; --border:#dde1d8; --accent:#c8f23d; --accent-ink:#1b2500; --dark:#171d20; --danger:#bd3d36; }
-*{box-sizing:border-box} html{background:var(--background)} body{margin:0;color:var(--foreground);background:var(--background);font-family:var(--font-inter),Inter,ui-sans-serif,system-ui,sans-serif;font-size:16px;-webkit-font-smoothing:antialiased} button,input,textarea,select{font:inherit} button,a{-webkit-tap-highlight-color:transparent} ::selection{background:var(--accent);color:var(--accent-ink)} .focus-ring:focus-visible{outline:3px solid rgba(154,197,25,.35);outline-offset:2px}@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}.animate-rise{animation:rise .35s ease-out both}
+:root {
+  --background: #f6f7f4;
+  --foreground: #141712;
+  --surface: #fff;
+  --surface-2: #f1f3ee;
+  --muted: #6f756a;
+  --border: #dde1d8;
+  --accent: #c8f23d;
+  --accent-ink: #1b2500;
+  --dark: #171d20;
+  --danger: #bd3d36;
+}
+* {
+  box-sizing: border-box;
+}
+html {
+  background: var(--background);
+}
+body {
+  margin: 0;
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-inter), Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+::selection {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.focus-ring:focus-visible {
+  outline: 3px solid rgba(154, 197, 25, 0.35);
+  outline-offset: 2px;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-rise {
+  animation: rise 0.35s ease-out both;
+}
