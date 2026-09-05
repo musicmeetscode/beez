@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -15,6 +16,7 @@ const schema = z.object({
 type Form = z.infer<typeof schema>;
 export function BusinessSetup() {
   const { user } = useAuth();
+  const [submitError, setSubmitError] = useState("");
   const {
     register,
     handleSubmit,
@@ -40,13 +42,14 @@ export function BusinessSetup() {
           className="mt-8 space-y-5"
           onSubmit={handleSubmit(async (v) => {
             if (!user) return;
-            try {
-              await createBusiness(user.uid, v);
-              toast.success("Business created");
-            } catch (e) {
-              toast.error(
-                e instanceof Error ? e.message : "Could not create business",
-              );
+          try {
+            setSubmitError("");
+            await createBusiness(user.uid, v);
+            toast.success("Business created");
+          } catch (e) {
+            const message = e instanceof Error ? e.message : "Could not create business";
+            setSubmitError(message);
+            toast.error(message);
             }
           })}
         >
@@ -66,7 +69,8 @@ export function BusinessSetup() {
               {...register("paymentInstructions")}
             />
           </label>
-          <Button className="w-full" disabled={isSubmitting}>
+        {submitError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{submitError}</p>}
+        <Button className="w-full" disabled={isSubmitting}>
             Create business
           </Button>
         </form>

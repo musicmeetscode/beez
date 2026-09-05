@@ -3,7 +3,6 @@ import {
   doc,
   getDoc,
   onSnapshot,
-  orderBy,
   query,
   runTransaction,
   serverTimestamp,
@@ -34,12 +33,13 @@ export function listenBusinesses(
 ): Unsubscribe {
   const { db } = requireFirebase();
   return onSnapshot(
-    query(
-      collection(db, "businesses"),
-      where("ownerUid", "==", uid),
-      orderBy("createdAt", "asc"),
-    ),
-    (s) => next(s.docs.map((d) => mapDoc<Business>(d))),
+    query(collection(db, "businesses"), where("ownerUid", "==", uid)),
+    (s) =>
+      next(
+        s.docs
+          .map((d) => mapDoc<Business>(d))
+          .sort((a, b) => timestampMillis(a.createdAt) - timestampMillis(b.createdAt)),
+      ),
     error,
   );
 }
@@ -51,14 +51,22 @@ export function listenByBusiness<T extends { id: string }>(
 ): Unsubscribe {
   const { db } = requireFirebase();
   return onSnapshot(
-    query(
-      collection(db, name),
-      where("businessId", "==", businessId),
-      orderBy(name === "transactions" ? "paymentDate" : "createdAt", "desc"),
-    ),
-    (s) => next(s.docs.map((d) => mapDoc<T>(d))),
+    query(collection(db, name), where("businessId", "==", businessId)),
+    (s) =>
+      next(
+        s.docs.map((d) => mapDoc<T>(d)).sort((a, b) => {
+          const aData = a as DocumentData;
+          const bData = b as DocumentData;
+          const field = name === "transactions" ? "paymentDate" : "createdAt";
+          return timestampMillis(bData[field]) - timestampMillis(aData[field]);
+        }),
+      ),
     error,
   );
+}
+
+function timestampMillis(value: unknown) {
+  return value instanceof Timestamp ? value.toMillis() : 0;
 }
 export async function createBusiness(
   ownerUid: string,

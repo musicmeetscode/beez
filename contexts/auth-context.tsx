@@ -30,8 +30,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     return onAuthStateChanged(auth, async (u) => {
       setUser(u);
-      if (u?.email) await ensureUser(u.uid, u.email);
-      setLoading(false);
+      try {
+        if (u?.email) await ensureUser(u.uid, u.email);
+      } finally {
+        setLoading(false);
+      }
     });
   }, []);
   const need = () => {
