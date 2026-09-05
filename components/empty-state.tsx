@@ -10,7 +10,7 @@ export function EmptyState({
   return (
     <div className="grid min-h-[22rem] place-items-center rounded-2xl border border-dashed border-[var(--border)] bg-white p-8 text-center">
       <div>
-        {/* Generated specifically for Ledgerly's empty data states. */}
+        {/* Generated specifically for Beez empty data states. */}
         <img
           src="/empty-ledger-line-art.png"
           alt=""

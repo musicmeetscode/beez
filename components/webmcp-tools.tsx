@@ -32,7 +32,7 @@ export function WebMCPTools() {
           name: "start_invoice_creation",
           title: "Start a new invoice",
           description:
-            "Open the same new-invoice form available in the Ledgerly header. This only starts the form and does not create a record.",
+            "Open the same new-invoice form available in the Beez header. This only starts the form and does not create a record.",
           inputSchema: {
             type: "object",
             properties: {},

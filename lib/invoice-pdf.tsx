@@ -9,6 +9,7 @@ import {
 } from "@react-pdf/renderer";
 import { format } from "date-fns";
 import type { Business, Client, Invoice, PaymentTransaction } from "./types";
+import { formatCurrency } from "./currency";
 const s = StyleSheet.create({
   page: { padding: 42, fontFamily: "Helvetica", fontSize: 9, color: "#20251f" },
   header: {
@@ -65,14 +66,65 @@ const s = StyleSheet.create({
     paddingTop: 10,
     color: "#768079",
   },
+  stamp: {
+    position: "absolute",
+    top: 330,
+    left: 177,
+    width: 242,
+    height: 94,
+    border: "4 solid #5d7830",
+    borderRadius: 47,
+    padding: 7,
+    opacity: 0.12,
+    transform: "rotate(-16deg)",
+    zIndex: 0,
+  },
+  stampInner: {
+    height: "100%",
+    border: "2 solid #5d7830",
+    borderRadius: 38,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stampTitle: {
+    color: "#35471e",
+    fontSize: 21,
+    fontWeight: 700,
+    letterSpacing: 3,
+  },
+  stampDetail: {
+    color: "#35471e",
+    fontSize: 8,
+    fontWeight: 700,
+    letterSpacing: 2,
+    marginTop: 4,
+  },
+  receiptAmount: {
+    marginTop: 32,
+    padding: 24,
+    borderRadius: 8,
+    backgroundColor: "#c8f23d",
+    alignItems: "center",
+  },
+  receiptAmountLabel: {
+    fontSize: 8,
+    fontWeight: 700,
+    letterSpacing: 2,
+  },
+  receiptAmountValue: { fontSize: 28, fontWeight: 700, marginTop: 8 },
 });
-function money(n: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(n);
+
+function Stamp({ label }: { label: string }) {
+  return (
+    <View fixed style={s.stamp}>
+      <View style={s.stampInner}>
+        <Text style={s.stampTitle}>OFFICIAL</Text>
+        <Text style={s.stampDetail}>{label.toUpperCase()}</Text>
+      </View>
+    </View>
+  );
 }
-function InvoiceDocument({
+export function InvoiceDocument({
   invoice,
   business,
   client,
@@ -83,9 +135,11 @@ function InvoiceDocument({
   client?: Client;
   transactions: PaymentTransaction[];
 }) {
+  const currency = business.currency || "USD";
   return (
     <Document>
       <Page size="A4" style={s.page}>
+        <Stamp label={invoice.status === "Paid" ? "Paid invoice" : "Invoice"} />
         <View style={s.header}>
           <View>
             {business.logoUrl ? (
@@ -107,8 +161,14 @@ function InvoiceDocument({
             <Text style={{ fontSize: 12, marginTop: 6 }}>
               {client?.name || "Client"}
             </Text>
+            {client?.businessName ? (
+              <Text style={{ marginTop: 4 }}>{client.businessName}</Text>
+            ) : null}
             <Text style={s.muted}>{client?.email}</Text>
-            <Text style={s.muted}>{client?.address}</Text>
+            <Text style={s.muted}>{client?.phone}</Text>
+            <Text style={s.muted}>
+              {client?.businessAddress || client?.address}
+            </Text>
           </View>
           <View>
             <Text>
@@ -131,27 +191,29 @@ function InvoiceDocument({
             <View key={n} style={s.tr}>
               <Text style={s.desc}>{i.description}</Text>
               <Text style={s.qty}>{i.quantity}</Text>
-              <Text style={s.rate}>{money(i.rate)}</Text>
-              <Text style={s.amount}>{money(i.amount)}</Text>
+              <Text style={s.rate}>{formatCurrency(i.rate, currency)}</Text>
+              <Text style={s.amount}>{formatCurrency(i.amount, currency)}</Text>
             </View>
           ))}
         </View>
         <View style={s.total}>
           <View style={s.totalRow}>
             <Text>Subtotal</Text>
-            <Text>{money(invoice.subtotal)}</Text>
+            <Text>{formatCurrency(invoice.subtotal, currency)}</Text>
           </View>
           <View style={s.totalRow}>
             <Text>Tax ({invoice.taxRate}%)</Text>
-            <Text>{money(invoice.totalAmount - invoice.subtotal)}</Text>
+            <Text>
+              {formatCurrency(invoice.totalAmount - invoice.subtotal, currency)}
+            </Text>
           </View>
           <View style={[s.totalRow, s.grand]}>
             <Text>Total</Text>
-            <Text>{money(invoice.totalAmount)}</Text>
+            <Text>{formatCurrency(invoice.totalAmount, currency)}</Text>
           </View>
           <View style={s.totalRow}>
             <Text>Paid</Text>
-            <Text>{money(invoice.amountPaid)}</Text>
+            <Text>{formatCurrency(invoice.amountPaid, currency)}</Text>
           </View>
           <View
             style={[
@@ -165,7 +227,7 @@ function InvoiceDocument({
             ]}
           >
             <Text>Balance due</Text>
-            <Text>{money(invoice.balanceDue)}</Text>
+            <Text>{formatCurrency(invoice.balanceDue, currency)}</Text>
           </View>
         </View>
         {transactions.length > 0 && (
@@ -176,18 +238,128 @@ function InvoiceDocument({
             {transactions.map((t) => (
               <View key={t.id} style={s.totalRow}>
                 <Text>
-                  {format(t.paymentDate.toDate(), "dd MMM yyyy")} ·{" "}
+                  {format(t.paymentDate.toDate(), "dd MMM yyyy")} -{" "}
                   {t.paymentMethod}
                 </Text>
-                <Text>{money(t.amount)}</Text>
+                <Text>{formatCurrency(t.amount, currency)}</Text>
               </View>
             ))}
           </View>
         )}
-        <Text style={s.footer}>Generated by Ledgerly · {business.name}</Text>
+        <Text style={s.footer}>Generated by Beez - {business.name}</Text>
       </Page>
     </Document>
   );
+}
+
+export function ReceiptDocument({
+  invoice,
+  business,
+  client,
+  transaction,
+  balanceRemaining,
+}: {
+  invoice: Invoice;
+  business: Business;
+  client?: Client;
+  transaction: PaymentTransaction;
+  balanceRemaining?: number;
+}) {
+  const currency = business.currency || "USD";
+  const remainingBalance = Math.max(0, balanceRemaining ?? invoice.balanceDue);
+  return (
+    <Document>
+      <Page size="A4" style={s.page}>
+        <Stamp label="Payment received" />
+        <View style={s.header}>
+          <View>
+            {business.logoUrl ? (
+              <Image src={business.logoUrl} style={s.logo} />
+            ) : null}
+            <Text style={s.brand}>{business.name}</Text>
+            <Text style={s.headerMuted}>Payment receipt</Text>
+          </View>
+          <View style={{ textAlign: "right" }}>
+            <Text>RECEIPT</Text>
+            <Text style={{ fontSize: 15, marginTop: 6 }}>
+              {receiptNumber(transaction)}
+            </Text>
+          </View>
+        </View>
+        <View style={s.receiptAmount}>
+          <Text style={s.receiptAmountLabel}>PAYMENT RECEIVED</Text>
+          <Text style={s.receiptAmountValue}>
+            {formatCurrency(transaction.amount, currency)}
+          </Text>
+        </View>
+        <View style={[s.row, s.meta]}>
+          <View>
+            <Text style={s.muted}>RECEIVED FROM</Text>
+            <Text style={{ fontSize: 12, marginTop: 6 }}>
+              {client?.name || "Client"}
+            </Text>
+            {client?.businessName ? (
+              <Text style={{ marginTop: 4 }}>{client.businessName}</Text>
+            ) : null}
+            <Text style={s.muted}>{client?.email}</Text>
+            <Text style={s.muted}>{client?.phone}</Text>
+          </View>
+          <View style={{ width: 220 }}>
+            <View style={s.totalRow}>
+              <Text>Date</Text>
+              <Text>
+                {format(transaction.paymentDate.toDate(), "dd MMM yyyy")}
+              </Text>
+            </View>
+            <View style={s.totalRow}>
+              <Text>Invoice</Text>
+              <Text>{invoice.invoiceNumber}</Text>
+            </View>
+            <View style={s.totalRow}>
+              <Text>Method</Text>
+              <Text>{transaction.paymentMethod}</Text>
+            </View>
+            {transaction.reference ? (
+              <View style={s.totalRow}>
+                <Text>Reference</Text>
+                <Text>{transaction.reference}</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+        <View style={[s.section, { width: 300, marginLeft: "auto" }]}>
+          <View style={s.totalRow}>
+            <Text>Invoice total</Text>
+            <Text>{formatCurrency(invoice.totalAmount, currency)}</Text>
+          </View>
+          <View style={s.totalRow}>
+            <Text>This payment</Text>
+            <Text>{formatCurrency(transaction.amount, currency)}</Text>
+          </View>
+          <View style={[s.totalRow, s.grand]}>
+            <Text>Balance remaining</Text>
+            <Text>{formatCurrency(remainingBalance, currency)}</Text>
+          </View>
+        </View>
+        <Text style={s.footer}>
+          Receipt issued by {business.name} - Generated by Beez
+        </Text>
+      </Page>
+    </Document>
+  );
+}
+
+function receiptNumber(transaction: PaymentTransaction) {
+  return `RCT-${transaction.id.slice(-8).toUpperCase()}`;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export async function downloadInvoicePdf(
   invoice: Invoice,
@@ -203,10 +375,27 @@ export async function downloadInvoicePdf(
       transactions={transactions}
     />,
   ).toBlob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${invoice.invoiceNumber}.pdf`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadBlob(blob, `${invoice.invoiceNumber}.pdf`);
+}
+
+export async function downloadReceiptPdf(
+  invoice: Invoice,
+  business: Business,
+  client: Client | undefined,
+  transaction: PaymentTransaction,
+  balanceRemaining?: number,
+) {
+  const blob = await pdf(
+    <ReceiptDocument
+      invoice={invoice}
+      business={business}
+      client={client}
+      transaction={transaction}
+      balanceRemaining={balanceRemaining}
+    />,
+  ).toBlob();
+  downloadBlob(
+    blob,
+    `${receiptNumber(transaction)}-${invoice.invoiceNumber}.pdf`,
+  );
 }

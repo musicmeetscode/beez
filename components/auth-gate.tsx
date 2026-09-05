@@ -1,5 +1,5 @@
 "use client";
-import { AlertTriangle, ArrowRight, FileText, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowRight, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 export function AuthGate() {
   return (
@@ -7,10 +7,12 @@ export function AuthGate() {
       <div className="mx-auto grid min-h-[calc(100vh-2rem)] max-w-6xl overflow-hidden rounded-[28px] border border-[var(--border)] bg-white shadow-[0_24px_80px_rgba(20,23,18,.08)] md:min-h-[calc(100vh-4rem)] md:grid-cols-[1.05fr_.95fr]">
         <section className="flex flex-col justify-between bg-[var(--dark)] p-7 text-white md:p-12">
           <div className="flex items-center gap-3 text-lg font-semibold">
-            <span className="grid size-10 place-items-center rounded-xl bg-[var(--accent)] text-[var(--accent-ink)]">
-              <FileText size={20} />
-            </span>
-            Ledgerly
+            <img
+              src="/icons/icon-192.png"
+              alt=""
+              className="size-10 rounded-xl"
+            />
+            Beez
           </div>
           <div className="my-16 max-w-xl animate-rise">
             <p className="mb-4 text-sm font-semibold uppercase tracking-[.18em] text-[var(--accent)]">
@@ -48,7 +50,7 @@ export function AuthGate() {
               <code className="rounded bg-amber-100 px-1.5 py-0.5 text-xs">
                 .env.local
               </code>{" "}
-              to enable secure Email/Password and Google sign-in.
+              to enable secure Google sign-in.
             </div>
             <Button className="mt-6 w-full" disabled>
               Continue with Google <ArrowRight size={17} />

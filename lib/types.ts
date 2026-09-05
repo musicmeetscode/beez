@@ -12,6 +12,7 @@ export interface Business {
   name: string;
   logoUrl: string;
   paymentInstructions: string;
+  currency: string;
   createdAt: Timestamp;
 }
 export interface Client {
@@ -21,6 +22,8 @@ export interface Client {
   email: string;
   phone: string;
   address: string;
+  businessName: string;
+  businessAddress: string;
   createdAt: Timestamp;
 }
 export interface Product {
@@ -65,4 +68,16 @@ export interface PaymentTransaction {
   paymentMethod: string;
   reference: string;
   paymentDate: Timestamp;
+}
+export interface Expense {
+  id: string;
+  ownerUid: string;
+  name: string;
+  category: string;
+  amount: number;
+  currency: string;
+  startsOn: Timestamp;
+  isRecurring: boolean;
+  recurringInterval: RecurringInterval;
+  createdAt: Timestamp;
 }

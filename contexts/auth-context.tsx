@@ -1,12 +1,12 @@
 "use client";
 import { createContext, useContext, useEffect, useState } from "react";
 import {
+  browserLocalPersistence,
   GoogleAuthProvider,
   onAuthStateChanged,
-  signInWithEmailAndPassword,
+  setPersistence,
   signInWithPopup,
   signOut,
-  createUserWithEmailAndPassword,
   type User,
 } from "firebase/auth";
 import { auth, isFirebaseConfigured } from "@/lib/firebase";
@@ -14,28 +14,49 @@ import { ensureUser } from "@/lib/data";
 type Value = {
   user: User | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
   google: () => Promise<void>;
   logout: () => Promise<void>;
 };
 const C = createContext<Value | null>(null);
+const googleProvider = new GoogleAuthProvider();
+
+function isInvalidGoogleCredential(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "auth/invalid-credential"
+  );
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(isFirebaseConfigured);
   useEffect(() => {
-    if (!auth) {
+    const firebaseAuth = auth;
+    if (!firebaseAuth) {
       setLoading(false);
       return;
     }
-    return onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      try {
-        if (u?.email) await ensureUser(u.uid, u.email);
-      } finally {
-        setLoading(false);
-      }
-    });
+    let active = true;
+    let stopListening: () => void = () => {};
+    void setPersistence(firebaseAuth, browserLocalPersistence)
+      .catch(() => undefined)
+      .finally(() => {
+        if (!active) return;
+        stopListening = onAuthStateChanged(firebaseAuth, async (u) => {
+          setUser(u);
+          try {
+            if (u?.email) await ensureUser(u.uid, u.email);
+          } finally {
+            setLoading(false);
+          }
+        });
+      });
+    return () => {
+      active = false;
+      stopListening();
+    };
   }, []);
   const need = () => {
     if (!auth) throw new Error("Firebase is not configured.");
@@ -46,14 +67,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         user,
         loading,
-        signIn: async (e, p) => {
-          await signInWithEmailAndPassword(need(), e, p);
-        },
-        signUp: async (e, p) => {
-          await createUserWithEmailAndPassword(need(), e, p);
-        },
         google: async () => {
-          await signInWithPopup(need(), new GoogleAuthProvider());
+          const firebaseAuth = need();
+          await setPersistence(firebaseAuth, browserLocalPersistence);
+          try {
+            await signInWithPopup(firebaseAuth, googleProvider);
+          } catch (error) {
+            if (isInvalidGoogleCredential(error)) {
+              throw new Error(
+                "Google could not validate this account. Please try again; your Beez session will remain saved after a successful sign-in.",
+              );
+            }
+            throw error;
+          }
         },
         logout: async () => {
           await signOut(need());

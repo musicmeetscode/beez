@@ -1,12 +1,18 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { useFieldArray, useForm, type Resolver } from "react-hook-form";
+import { useEffect, useState } from "react";
+import {
+  useFieldArray,
+  useForm,
+  useWatch,
+  type Resolver,
+} from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Check, ChevronsUpDown, Plus, Trash2 } from "lucide-react";
 import { Timestamp } from "firebase/firestore";
 import { toast } from "sonner";
 import { createInvoice } from "@/lib/data";
+import { formatCurrency } from "@/lib/currency";
 import { useBusiness } from "@/contexts/business-context";
 import type { Client, InvoiceStatus, Product } from "@/lib/types";
 import { Button } from "./ui/button";
@@ -52,22 +58,35 @@ const schema = z
     message: "Choose an interval",
   });
 type Form = z.infer<typeof schema>;
-const money = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-});
 export function InvoiceComposer({
   open,
   onOpenChange,
   clients,
   products,
+  initialClientId,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   clients: Client[];
   products: Product[];
+  initialClientId?: string;
 }) {
-  const { activeBusinessId, activeBusiness } = useBusiness();
+  const { activeBusinessId, activeBusiness, businesses } = useBusiness();
+  const [selectedBusinessId, setSelectedBusinessId] = useState("");
+  const targetBusinessId =
+    activeBusinessId === "all"
+      ? selectedBusinessId || businesses[0]?.id || ""
+      : activeBusinessId;
+  const targetBusiness =
+    businesses.find((business) => business.id === targetBusinessId) ||
+    activeBusiness;
+  const scopedClients = clients.filter(
+    (client) => client.businessId === targetBusinessId,
+  );
+  const scopedProducts = products.filter(
+    (product) => product.businessId === targetBusinessId,
+  );
+  const currency = targetBusiness?.currency || "USD";
   const [tone, setTone] = useState<InvoiceStatus>("Sent");
   const [clientOpen, setClientOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -95,35 +114,73 @@ export function InvoiceComposer({
   });
   const { fields, append, remove } = useFieldArray({ control, name: "items" });
   const values = watch();
-  const subtotal = useMemo(
-    () =>
-      values.items.reduce(
-        (s, i) => s + (Number(i.quantity) || 0) * (Number(i.rate) || 0),
-        0,
-      ),
-    [values.items],
+  const liveItems = useWatch({ control, name: "items" }) || [];
+  const liveTaxRate = useWatch({ control, name: "taxRate" });
+  const subtotal = liveItems.reduce(
+    (sum, item) =>
+      sum + (Number(item.quantity) || 0) * (Number(item.rate) || 0),
+    0,
   );
-  const total = subtotal * (1 + (Number(values.taxRate) || 0) / 100);
-  const client = clients.find((c) => c.id === values.clientId);
-  const filtered = clients.filter((c) =>
-    `${c.name} ${c.email}`.toLowerCase().includes(search.toLowerCase()),
+  const total = subtotal * (1 + (Number(liveTaxRate) || 0) / 100);
+  const client = scopedClients.find((c) => c.id === values.clientId);
+  const filtered = scopedClients.filter((c) =>
+    `${c.name} ${c.email} ${c.businessName || ""}`
+      .toLowerCase()
+      .includes(search.toLowerCase()),
   );
   useEffect(() => {
     if (!open) setSearch("");
   }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const initialClient = clients.find(
+      (client) => client.id === initialClientId,
+    );
+    if (activeBusinessId === "all") {
+      setSelectedBusinessId(
+        initialClient?.businessId ||
+          selectedBusinessId ||
+          businesses[0]?.id ||
+          "",
+      );
+    }
+    if (initialClient) {
+      setValue("clientId", initialClient.id, { shouldValidate: true });
+    }
+  }, [
+    open,
+    activeBusinessId,
+    initialClientId,
+    clients,
+    selectedBusinessId,
+    businesses,
+    setValue,
+  ]);
   const save = handleSubmit(async (v) => {
     try {
+      if (!targetBusinessId) throw new Error("Choose a business");
       const invoiceNumber = `INV-${Date.now().toString(36).toUpperCase()}`;
-      await createInvoice(activeBusinessId, {
+      const items = v.items.map((item) => {
+        const quantity = Number(item.quantity) || 0;
+        const rate = Number(item.rate) || 0;
+        return { ...item, quantity, rate, amount: quantity * rate };
+      });
+      const calculatedSubtotal = items.reduce(
+        (sum, item) => sum + item.amount,
+        0,
+      );
+      const taxRate = Number(v.taxRate) || 0;
+      const calculatedTotal = calculatedSubtotal * (1 + taxRate / 100);
+      await createInvoice(targetBusinessId, {
         clientId: v.clientId,
         invoiceNumber,
         status: tone,
-        items: v.items.map((i) => ({ ...i, amount: i.quantity * i.rate })),
-        subtotal,
-        taxRate: v.taxRate,
-        totalAmount: total,
+        items,
+        subtotal: calculatedSubtotal,
+        taxRate,
+        totalAmount: calculatedTotal,
         amountPaid: 0,
-        balanceDue: total,
+        balanceDue: calculatedTotal,
         issueDate: Timestamp.fromDate(new Date(`${v.issueDate}T12:00:00`)),
         dueDate: Timestamp.fromDate(new Date(`${v.dueDate}T12:00:00`)),
         isRecurring: v.isRecurring,
@@ -142,7 +199,7 @@ export function InvoiceComposer({
         <div className="border-b border-[var(--border)] p-6 pr-14">
           <DialogTitle>New invoice</DialogTitle>
           <DialogDescription>
-            Create and send a precise invoice for {activeBusiness?.name}.
+            Create and send a precise invoice for {targetBusiness?.name}.
           </DialogDescription>
         </div>
         <form onSubmit={save}>
@@ -153,10 +210,10 @@ export function InvoiceComposer({
                   From
                 </p>
                 <p className="mt-2 text-lg font-semibold">
-                  {activeBusiness?.name}
+                  {targetBusiness?.name}
                 </p>
                 <p className="mt-1 whitespace-pre-line text-sm leading-6 text-[#aeb7b9]">
-                  {activeBusiness?.paymentInstructions ||
+                  {targetBusiness?.paymentInstructions ||
                     "Payment instructions can be added in Settings."}
                 </p>
               </div>
@@ -165,10 +222,12 @@ export function InvoiceComposer({
                   <div>
                     <h3 className="font-semibold">Line items</h3>
                     <p className="text-sm text-[var(--muted)]">
-                      Choose a product, then adjust its invoice details if needed.
+                      Choose a product, then adjust its invoice details if
+                      needed.
                     </p>
                   </div>
                   <ProductDialog
+                    businessId={targetBusinessId}
                     trigger={
                       <Button type="button" size="sm" variant="outline">
                         <Plus size={15} />
@@ -186,14 +245,21 @@ export function InvoiceComposer({
                       <Select
                         value={watch(`items.${index}.productId`) || undefined}
                         onValueChange={(id) => {
-                          const p = products.find((x) => x.id === id);
+                          const p = scopedProducts.find((x) => x.id === id);
                           if (p) {
-                            setValue(`items.${index}.productId`, p.id);
+                            setValue(`items.${index}.productId`, p.id, {
+                              shouldDirty: true,
+                              shouldValidate: true,
+                            });
                             setValue(
                               `items.${index}.description`,
                               p.description,
+                              { shouldDirty: true, shouldValidate: true },
                             );
-                            setValue(`items.${index}.rate`, p.rate);
+                            setValue(`items.${index}.rate`, p.rate, {
+                              shouldDirty: true,
+                              shouldValidate: true,
+                            });
                           }
                         }}
                       >
@@ -201,7 +267,7 @@ export function InvoiceComposer({
                           <SelectValue placeholder="Product" />
                         </SelectTrigger>
                         <SelectContent>
-                          {products.map((p) => (
+                          {scopedProducts.map((p) => (
                             <SelectItem key={p.id} value={p.id}>
                               {p.name}
                             </SelectItem>
@@ -265,7 +331,7 @@ export function InvoiceComposer({
               <div className="ml-auto w-full max-w-sm space-y-3 border-t border-[var(--border)] pt-5 text-sm">
                 <div className="flex justify-between text-[var(--muted)]">
                   <span>Subtotal</span>
-                  <span>{money.format(subtotal)}</span>
+                  <span>{formatCurrency(subtotal, currency)}</span>
                 </div>
                 <div className="flex items-center justify-between gap-4">
                   <label htmlFor="tax">Tax rate</label>
@@ -284,11 +350,42 @@ export function InvoiceComposer({
                 </div>
                 <div className="flex justify-between border-t border-[var(--border)] pt-3 text-lg font-semibold">
                   <span>Total</span>
-                  <span>{money.format(total)}</span>
+                  <span>{formatCurrency(total, currency)}</span>
                 </div>
               </div>
             </section>
             <aside className="space-y-5 border-t border-[var(--border)] bg-[#fbfcf9] p-5 lg:border-l lg:border-t-0">
+              {activeBusinessId === "all" && (
+                <label className="block text-sm font-medium">
+                  Business
+                  <Select
+                    value={targetBusinessId}
+                    onValueChange={(value) => {
+                      setSelectedBusinessId(value);
+                      setValue("clientId", "");
+                      setValue("items", [
+                        {
+                          productId: "",
+                          description: "",
+                          quantity: 1,
+                          rate: 0,
+                        },
+                      ]);
+                    }}
+                  >
+                    <SelectTrigger className="mt-1.5">
+                      <SelectValue placeholder="Choose a business" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {businesses.map((business) => (
+                        <SelectItem key={business.id} value={business.id}>
+                          {business.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+              )}
               <div>
                 <label className="text-sm font-medium">Bill to</label>
                 <Popover open={clientOpen} onOpenChange={setClientOpen}>
@@ -328,7 +425,10 @@ export function InvoiceComposer({
                                   : "opacity-0"
                               }
                             />
-                            <span>{c.name}</span>
+                            <span>
+                              {c.name}
+                              {c.businessName ? ` · ${c.businessName}` : ""}
+                            </span>
                           </CommandItem>
                         ))}
                         {!filtered.length && (
@@ -346,6 +446,7 @@ export function InvoiceComposer({
                   </p>
                 )}
                 <ClientDialog
+                  businessId={targetBusinessId}
                   onCreated={(id) =>
                     setValue("clientId", id, { shouldValidate: true })
                   }

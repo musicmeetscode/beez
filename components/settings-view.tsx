@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Card, CardContent, CardHeader } from "./ui/card";
+import { CurrencySelect } from "./currency-select";
 import {
   Dialog,
   DialogContent,
@@ -21,6 +22,7 @@ import {
 const schema = z.object({
   name: z.string().min(2),
   paymentInstructions: z.string(),
+  currency: z.string().length(3),
 });
 type Form = z.infer<typeof schema>;
 export function SettingsView() {
@@ -29,6 +31,8 @@ export function SettingsView() {
     register,
     handleSubmit,
     reset,
+    watch,
+    setValue,
     formState: { isSubmitting },
   } = useForm<Form>({ resolver: zodResolver(schema) });
   useEffect(() => {
@@ -36,6 +40,7 @@ export function SettingsView() {
       reset({
         name: activeBusiness.name,
         paymentInstructions: activeBusiness.paymentInstructions,
+        currency: activeBusiness.currency || "USD",
       });
   }, [activeBusiness, reset]);
   if (!activeBusiness) return null;
@@ -65,6 +70,16 @@ export function SettingsView() {
             <label className="block text-sm font-medium">
               Business name
               <Input className="mt-1.5" {...register("name")} />
+            </label>
+            <label className="block text-sm font-medium">
+              Currency
+              <CurrencySelect
+                className="mt-1.5"
+                value={watch("currency")}
+                onValueChange={(value) =>
+                  setValue("currency", value, { shouldValidate: true })
+                }
+              />
             </label>
             <label className="block text-sm font-medium">
               Payment instructions
@@ -136,10 +151,12 @@ function NewBusinessDialog() {
     register,
     handleSubmit,
     reset,
+    watch,
+    setValue,
     formState: { isSubmitting },
   } = useForm<Form>({
     resolver: zodResolver(schema),
-    defaultValues: { name: "", paymentInstructions: "" },
+    defaultValues: { name: "", paymentInstructions: "", currency: "USD" },
   });
   return (
     <Card>
@@ -184,6 +201,16 @@ function NewBusinessDialog() {
               <label className="block text-sm font-medium">
                 Business name
                 <Input className="mt-1.5" autoFocus {...register("name")} />
+              </label>
+              <label className="block text-sm font-medium">
+                Currency
+                <CurrencySelect
+                  className="mt-1.5"
+                  value={watch("currency")}
+                  onValueChange={(value) =>
+                    setValue("currency", value, { shouldValidate: true })
+                  }
+                />
               </label>
               <label className="block text-sm font-medium">
                 Payment instructions

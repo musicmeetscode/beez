@@ -1,20 +1,26 @@
 "use client";
 import { useState } from "react";
 import { format } from "date-fns";
+import { toast } from "sonner";
 import {
+  ArrowLeft,
   Building2,
   CheckCircle2,
   ChevronRight,
+  Download,
   FilePlus2,
   FileText,
   LayoutDashboard,
   LogOut,
+  Mail,
   Menu,
   Package,
   Plus,
+  Phone,
   Receipt,
   Search,
   Settings,
+  TrendingDown,
   Users,
   WalletCards,
   X,
@@ -22,7 +28,17 @@ import {
 import { useAuth } from "@/contexts/auth-context";
 import { useBusiness } from "@/contexts/business-context";
 import { useBusinessCollection } from "@/hooks/use-business-collection";
-import type { Client, Invoice, PaymentTransaction, Product } from "@/lib/types";
+import { useExpenses } from "@/hooks/use-expenses";
+import { formatCurrency } from "@/lib/currency";
+import { expenseAmountInMonth } from "@/lib/expenses";
+import type {
+  Business,
+  Client,
+  Expense,
+  Invoice,
+  PaymentTransaction,
+  Product,
+} from "@/lib/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Card, CardContent, CardHeader } from "./ui/card";
@@ -35,20 +51,24 @@ import {
   SelectValue,
 } from "./ui/select";
 import { EmptyState } from "./empty-state";
-import { ClientDialog, ProductDialog } from "./entity-dialogs";
+import {
+  ClientDialog,
+  EditClientDialog,
+  ProductDialog,
+} from "./entity-dialogs";
 import { InvoiceComposer } from "./invoice-composer";
 import { InvoiceDetail } from "./invoice-detail";
+import { downloadReceiptPdf } from "@/lib/invoice-pdf";
 import { SettingsView } from "./settings-view";
-type View = "dashboard" | "invoices" | "clients" | "products" | "settings";
-const money = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-});
+import { ExpensesView } from "./expenses-view";
+type View =
+  "dashboard" | "invoices" | "clients" | "products" | "expenses" | "settings";
 const nav = [
   { id: "dashboard" as const, label: "Dashboard", icon: LayoutDashboard },
   { id: "invoices" as const, label: "Invoices", icon: FileText },
   { id: "clients" as const, label: "Clients", icon: Users },
   { id: "products" as const, label: "Products", icon: Package },
+  { id: "expenses" as const, label: "Expenses", icon: TrendingDown },
   { id: "settings" as const, label: "Settings", icon: Settings },
 ];
 export function Workspace() {
@@ -61,32 +81,57 @@ export function Workspace() {
     activeBusiness,
     error: businessError,
   } = useBusiness();
-  const { data: clients, loading: clientsLoading, error: clientsError } =
-    useBusinessCollection<Client>("clients");
-  const { data: products, loading: productsLoading, error: productsError } =
-    useBusinessCollection<Product>("products");
-  const { data: invoices, loading: invoicesLoading, error: invoicesError } =
-    useBusinessCollection<Invoice>("invoices");
+  const {
+    data: clients,
+    loading: clientsLoading,
+    error: clientsError,
+  } = useBusinessCollection<Client>("clients");
+  const {
+    data: products,
+    loading: productsLoading,
+    error: productsError,
+  } = useBusinessCollection<Product>("products");
+  const {
+    data: invoices,
+    loading: invoicesLoading,
+    error: invoicesError,
+  } = useBusinessCollection<Invoice>("invoices");
   const {
     data: transactions,
     loading: transactionsLoading,
     error: transactionsError,
-  } =
-    useBusinessCollection<PaymentTransaction>("transactions");
+  } = useBusinessCollection<PaymentTransaction>("transactions");
+  const {
+    data: expenses,
+    loading: expensesLoading,
+    error: expensesError,
+  } = useExpenses();
   const dataError =
     businessError ||
     clientsError ||
     productsError ||
     invoicesError ||
-    transactionsError;
+    transactionsError ||
+    expensesError;
   const [view, setView] = useState<View>("dashboard");
   const [mobile, setMobile] = useState(false);
   const [composer, setComposer] = useState(false);
+  const [composerClientId, setComposerClientId] = useState<string>();
   const [selected, setSelected] = useState<Invoice | null>(null);
+  const [selectedClientId, setSelectedClientId] = useState("");
+  const selectedClient = clients.find(
+    (client) => client.id === selectedClientId,
+  );
+  const isAllBusinesses = activeBusinessId === "all";
   const go = (v: View) => {
     setView(v);
     setMobile(false);
     setSelected(null);
+    setSelectedClientId("");
+  };
+  const openComposer = (clientId?: string) => {
+    setComposerClientId(clientId);
+    setComposer(true);
   };
   return (
     <div className="min-h-screen bg-[var(--background)] lg:pl-[248px]">
@@ -159,7 +204,7 @@ export function Workspace() {
           </button>
           <div className="min-w-0 flex-1">
             <p className="truncate text-xs font-semibold uppercase tracking-[.12em] text-[var(--muted)]">
-              {activeBusiness?.name}
+              {isAllBusinesses ? "All businesses" : activeBusiness?.name}
             </p>
             <h1 className="truncate text-lg font-semibold tracking-[-.02em]">
               {view[0].toUpperCase() + view.slice(1)}
@@ -174,6 +219,7 @@ export function Workspace() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="all">All businesses</SelectItem>
               {businesses.map((b) => (
                 <SelectItem key={b.id} value={b.id}>
                   {b.name}
@@ -181,14 +227,21 @@ export function Workspace() {
               ))}
             </SelectContent>
           </Select>
-          <Button size="sm" onClick={() => setComposer(true)}>
+          <Button
+            size="sm"
+            disabled={!businesses.length}
+            onClick={() => openComposer()}
+          >
             <Plus size={16} />
             <span className="hidden sm:inline">New invoice</span>
           </Button>
         </header>
         <div className="mx-auto max-w-[1440px] p-4 md:p-8">
           {dataError && (
-            <div role="alert" className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+            <div
+              role="alert"
+              className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"
+            >
               Could not load all business records. {dataError}
             </div>
           )}
@@ -197,13 +250,20 @@ export function Workspace() {
               invoices={invoices}
               transactions={transactions}
               clients={clients}
-              loading={invoicesLoading || transactionsLoading}
+              businesses={businesses}
+              expenses={expenses}
+              loading={
+                invoicesLoading || transactionsLoading || expensesLoading
+              }
             />
           )}{" "}
           {view === "invoices" &&
             (selected ? (
               <InvoiceDetail
                 invoice={selected}
+                business={businesses.find(
+                  (business) => business.id === selected.businessId,
+                )}
                 client={clients.find((c) => c.id === selected.clientId)}
                 transactions={transactions.filter(
                   (t) => t.invoiceId === selected.id,
@@ -214,41 +274,87 @@ export function Workspace() {
               <InvoicesView
                 invoices={invoices}
                 clients={clients}
+                businesses={businesses}
                 loading={invoicesLoading}
                 onSelect={setSelected}
-                onNew={() => setComposer(true)}
+                onNew={() => openComposer()}
+                canCreate={businesses.length > 0}
               />
             ))}{" "}
-          {view === "clients" && (
-            <ClientsView
-              clients={clients}
-              invoices={invoices}
-              loading={clientsLoading}
+          {view === "clients" &&
+            (selectedClient ? (
+              <ClientDetail
+                client={selectedClient}
+                invoices={invoices.filter(
+                  (invoice) => invoice.clientId === selectedClient.id,
+                )}
+                transactions={transactions.filter(
+                  (transaction) => transaction.clientId === selectedClient.id,
+                )}
+                businesses={businesses}
+                onBack={() => setSelectedClientId("")}
+                onNewInvoice={() => openComposer(selectedClient.id)}
+                onSelectInvoice={(invoice) => {
+                  setView("invoices");
+                  setSelectedClientId("");
+                  setSelected(invoice);
+                }}
+              />
+            ) : (
+              <ClientsView
+                clients={clients}
+                invoices={invoices}
+                businesses={businesses}
+                loading={clientsLoading}
+                canCreate={businesses.length > 0}
+                onSelect={setSelectedClientId}
+              />
+            ))}{" "}
+          {view === "products" && (
+            <ProductsView
+              products={products}
+              businesses={businesses}
+              loading={productsLoading}
+              canCreate={!isAllBusinesses}
             />
           )}{" "}
-          {view === "products" && (
-            <ProductsView products={products} loading={productsLoading} />
+          {view === "expenses" && (
+            <ExpensesView expenses={expenses} loading={expensesLoading} />
           )}{" "}
-          {view === "settings" && <SettingsView />}
+          {view === "settings" &&
+            (isAllBusinesses ? (
+              <EmptyState
+                title="Choose a business to manage settings"
+                detail="Settings and logo uploads apply to one business at a time."
+              />
+            ) : (
+              <SettingsView />
+            ))}
         </div>
       </main>
       <nav className="fixed inset-x-0 bottom-0 z-40 flex h-[72px] items-center justify-around border-t border-[var(--border)] bg-white/95 px-2 backdrop-blur lg:hidden">
-        {nav.slice(0, 4).map((n) => (
-          <button
-            key={n.id}
-            onClick={() => go(n.id)}
-            className={`focus-ring flex min-w-16 flex-col items-center gap-1 rounded-xl px-3 py-2 text-[11px] font-medium ${view === n.id ? "text-black" : "text-[var(--muted)]"}`}
-          >
-            <n.icon size={20} strokeWidth={view === n.id ? 2.5 : 1.8} />
-            {n.label}
-          </button>
-        ))}
+        {nav
+          .filter((item) => item.id !== "settings")
+          .map((n) => (
+            <button
+              key={n.id}
+              onClick={() => go(n.id)}
+              className={`focus-ring flex min-w-16 flex-col items-center gap-1 rounded-xl px-3 py-2 text-[11px] font-medium ${view === n.id ? "text-black" : "text-[var(--muted)]"}`}
+            >
+              <n.icon size={20} strokeWidth={view === n.id ? 2.5 : 1.8} />
+              {n.label}
+            </button>
+          ))}
       </nav>
       <InvoiceComposer
         open={composer}
-        onOpenChange={setComposer}
+        onOpenChange={(value) => {
+          setComposer(value);
+          if (!value) setComposerClientId(undefined);
+        }}
         clients={clients}
         products={products}
+        initialClientId={composerClientId}
       />
     </div>
   );
@@ -256,10 +362,8 @@ export function Workspace() {
 function Brand() {
   return (
     <div className="flex items-center gap-3 text-lg font-semibold">
-      <span className="grid size-10 place-items-center rounded-xl bg-[var(--accent)] text-[var(--accent-ink)]">
-        <FileText size={20} />
-      </span>
-      Ledgerly
+      <img src="/icons/icon-192.png" alt="" className="size-10 rounded-xl" />
+      Beez
     </div>
   );
 }
@@ -296,21 +400,27 @@ function Dashboard({
   invoices,
   transactions,
   clients,
+  businesses,
+  expenses,
   loading,
 }: {
   invoices: Invoice[];
   transactions: PaymentTransaction[];
   clients: Client[];
+  businesses: Business[];
+  expenses: Expense[];
   loading: boolean;
 }) {
-  const outstanding = invoices.reduce((s, i) => s + i.balanceDue, 0),
-    paid = invoices.filter((i) => i.status === "Paid").length,
-    revenue = transactions
-      .filter(
-        (t) => t.paymentDate?.toDate().getMonth() === new Date().getMonth(),
-      )
-      .reduce((s, t) => s + t.amount, 0),
-    recent = invoices.slice(0, 5);
+  const paid = invoices.filter((i) => i.status === "Paid").length;
+  const monthlyTransactions = transactions.filter((transaction) => {
+    const paymentDate = transaction.paymentDate?.toDate();
+    const now = new Date();
+    return (
+      paymentDate?.getMonth() === now.getMonth() &&
+      paymentDate?.getFullYear() === now.getFullYear()
+    );
+  });
+  const recent = invoices.slice(0, 5);
   if (loading) return <Loading />;
   return (
     <div className="space-y-6 animate-rise">
@@ -323,23 +433,32 @@ function Dashboard({
         <Metric
           icon={WalletCards}
           label="Outstanding"
-          value={money.format(outstanding)}
+          value={formatGroupedTotals(
+            invoices,
+            businesses,
+            (invoice) => invoice.balanceDue,
+          )}
         />
         <Metric
           icon={Receipt}
-          label="Revenue this month"
-          value={money.format(revenue)}
+          label="Net revenue this month"
+          value={formatNetRevenue(monthlyTransactions, businesses, expenses)}
+        />
+        <Metric
+          icon={TrendingDown}
+          label="Projected expenses"
+          value={formatExpenseTotals(expenses)}
         />
         <Metric
           icon={CheckCircle2}
           label="Paid invoices"
           value={String(paid)}
         />
-        <Metric
+        {/* <Metric
           icon={Users}
           label="Active clients"
           value={String(clients.length)}
-        />
+        /> */}
       </div>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
@@ -347,7 +466,11 @@ function Dashboard({
         </CardHeader>
         <CardContent>
           {recent.length ? (
-            <InvoiceRows invoices={recent} clients={clients} />
+            <InvoiceRows
+              invoices={recent}
+              clients={clients}
+              businesses={businesses}
+            />
           ) : (
             <EmptyState
               title="No invoices yet"
@@ -389,15 +512,19 @@ function Metric({
 function InvoicesView({
   invoices,
   clients,
+  businesses,
   loading,
   onSelect,
   onNew,
+  canCreate,
 }: {
   invoices: Invoice[];
   clients: Client[];
+  businesses: Business[];
   loading: boolean;
   onSelect: (i: Invoice) => void;
   onNew: () => void;
+  canCreate: boolean;
 }) {
   const [status, setStatus] = useState("All");
   const [search, setSearch] = useState("");
@@ -445,6 +572,7 @@ function InvoicesView({
             <InvoiceRows
               invoices={rows}
               clients={clients}
+              businesses={businesses}
               onSelect={onSelect}
             />
           </CardContent>
@@ -458,7 +586,7 @@ function InvoicesView({
               : "Create the first invoice for this business."
           }
           action={
-            !invoices.length ? (
+            !invoices.length && canCreate ? (
               <Button onClick={onNew}>
                 <FilePlus2 size={17} />
                 Create invoice
@@ -473,10 +601,12 @@ function InvoicesView({
 function InvoiceRows({
   invoices,
   clients,
+  businesses,
   onSelect,
 }: {
   invoices: Invoice[];
   clients: Client[];
+  businesses: Business[];
   onSelect?: (i: Invoice) => void;
 }) {
   return (
@@ -501,9 +631,18 @@ function InvoiceRows({
           </p>
           <Status value={i.status} />
           <div className="text-right">
-            <p className="font-semibold">{money.format(i.totalAmount)}</p>
+            <p className="font-semibold">
+              {formatCurrency(
+                i.totalAmount,
+                currencyForBusiness(i.businessId, businesses),
+              )}
+            </p>
             <p className="text-xs text-[var(--muted)]">
-              {money.format(i.balanceDue)} due
+              {formatCurrency(
+                i.balanceDue,
+                currencyForBusiness(i.businessId, businesses),
+              )}{" "}
+              due
             </p>
           </div>
           {onSelect && (
@@ -537,71 +676,315 @@ function Status({ value }: { value: Invoice["status"] }) {
 function ClientsView({
   clients,
   invoices,
+  businesses,
   loading,
+  canCreate,
+  onSelect,
 }: {
   clients: Client[];
   invoices: Invoice[];
+  businesses: Business[];
   loading: boolean;
+  canCreate: boolean;
+  onSelect: (clientId: string) => void;
 }) {
   if (loading) return <Loading />;
   return (
     <div className="space-y-5">
-      <div className="flex justify-end">
-        <ClientDialog />
-      </div>
+      {canCreate && (
+        <div className="flex justify-end">
+          <ClientDialog />
+        </div>
+      )}
       {clients.length ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {clients.map((c) => (
-            <Card key={c.id}>
-              <CardContent>
-                <div className="flex items-start justify-between">
-                  <span className="grid size-11 place-items-center rounded-xl bg-[var(--dark)] font-semibold text-white">
-                    {c.name.slice(0, 2).toUpperCase()}
-                  </span>
-                  <span className="text-xs text-[var(--muted)]">
-                    {invoices.filter((i) => i.clientId === c.id).length}{" "}
-                    invoices
-                  </span>
-                </div>
-                <h3 className="mt-4 font-semibold">{c.name}</h3>
-                <p className="mt-1 truncate text-sm text-[var(--muted)]">
-                  {c.email || c.phone || "No contact details"}
-                </p>
-                <p className="mt-4 text-sm font-semibold">
-                  {money.format(
-                    invoices
-                      .filter((i) => i.clientId === c.id)
-                      .reduce((s, i) => s + i.balanceDue, 0),
-                  )}{" "}
-                  outstanding
-                </p>
-              </CardContent>
-            </Card>
+            <button
+              key={c.id}
+              className="focus-ring rounded-2xl text-left"
+              onClick={() => onSelect(c.id)}
+            >
+              <Card className="h-full transition hover:-translate-y-0.5 hover:shadow-md">
+                <CardContent>
+                  <div className="flex items-start justify-between">
+                    <span className="grid size-11 place-items-center rounded-xl bg-[var(--dark)] font-semibold text-white">
+                      {c.name.slice(0, 2).toUpperCase()}
+                    </span>
+                    <span className="text-xs text-[var(--muted)]">
+                      {invoices.filter((i) => i.clientId === c.id).length}{" "}
+                      invoices
+                    </span>
+                  </div>
+                  <h3 className="mt-4 font-semibold">{c.name}</h3>
+                  {c.businessName && (
+                    <p className="mt-1 truncate text-sm font-medium">
+                      {c.businessName}
+                    </p>
+                  )}
+                  <p className="mt-1 truncate text-sm text-[var(--muted)]">
+                    {c.email || c.phone || "No contact details"}
+                  </p>
+                  <p className="mt-4 text-sm font-semibold">
+                    {formatCurrency(
+                      invoices
+                        .filter((i) => i.clientId === c.id)
+                        .reduce((s, i) => s + i.balanceDue, 0),
+                      currencyForBusiness(c.businessId, businesses),
+                    )}{" "}
+                    outstanding
+                  </p>
+                </CardContent>
+              </Card>
+            </button>
           ))}
         </div>
       ) : (
         <EmptyState
           title="No clients yet"
-          detail="Add a client once, then reuse their details across invoices and receipts."
-          action={<ClientDialog />}
+          detail={
+            canCreate
+              ? "Add a client once, then reuse their details across invoices and receipts."
+              : "There are no clients across your businesses yet. Select a business to add one."
+          }
+          action={canCreate ? <ClientDialog /> : undefined}
         />
       )}
     </div>
   );
 }
+
+function ClientDetail({
+  client,
+  invoices,
+  transactions,
+  businesses,
+  onBack,
+  onNewInvoice,
+  onSelectInvoice,
+}: {
+  client: Client;
+  invoices: Invoice[];
+  transactions: PaymentTransaction[];
+  businesses: Business[];
+  onBack: () => void;
+  onNewInvoice: () => void;
+  onSelectInvoice: (invoice: Invoice) => void;
+}) {
+  const business = businesses.find((row) => row.id === client.businessId);
+  const currency = business?.currency || "USD";
+  const outstanding = invoices.reduce(
+    (total, invoice) => total + invoice.balanceDue,
+    0,
+  );
+  const received = transactions.reduce(
+    (total, transaction) => total + transaction.amount,
+    0,
+  );
+  return (
+    <div className="space-y-6 animate-rise">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Back to clients"
+          onClick={onBack}
+        >
+          <ArrowLeft size={19} />
+        </Button>
+        <span className="grid size-12 place-items-center rounded-2xl bg-[var(--dark)] font-semibold text-white">
+          {client.name.slice(0, 2).toUpperCase()}
+        </span>
+        <div className="mr-auto min-w-0">
+          <h2 className="truncate text-xl font-semibold">{client.name}</h2>
+          <p className="truncate text-sm text-[var(--muted)]">
+            {client.businessName || business?.name}
+          </p>
+        </div>
+        {client.email && (
+          <Button asChild variant="outline" size="sm">
+            <a href={`mailto:${client.email}`}>
+              <Mail size={15} />
+              Email
+            </a>
+          </Button>
+        )}
+        {client.phone && (
+          <Button asChild variant="outline" size="sm">
+            <a href={`tel:${client.phone}`}>
+              <Phone size={15} />
+              Call
+            </a>
+          </Button>
+        )}
+        <EditClientDialog client={client} />
+        <Button onClick={onNewInvoice}>
+          <FilePlus2 size={17} />
+          New invoice
+        </Button>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Metric
+          icon={FileText}
+          label="Invoices"
+          value={String(invoices.length)}
+        />
+        <Metric
+          icon={WalletCards}
+          label="Outstanding"
+          value={formatCurrency(outstanding, currency)}
+        />
+        <Metric
+          icon={Receipt}
+          label="Payments received"
+          value={formatCurrency(received, currency)}
+        />
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1.2fr_.8fr]">
+        <Card>
+          <CardHeader>
+            <h3 className="font-semibold">Invoices</h3>
+          </CardHeader>
+          <CardContent>
+            {invoices.length ? (
+              <InvoiceRows
+                invoices={invoices}
+                clients={[client]}
+                businesses={businesses}
+                onSelect={onSelectInvoice}
+              />
+            ) : (
+              <EmptyState
+                title="No invoices for this client"
+                detail="Create an invoice to begin their billing history."
+                action={
+                  <Button onClick={onNewInvoice}>
+                    <FilePlus2 size={17} />
+                    Create invoice
+                  </Button>
+                }
+              />
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <h3 className="font-semibold">Receipts</h3>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Every recorded payment has a stamped receipt.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {transactions.length ? (
+              <div className="divide-y divide-[var(--border)]">
+                {transactions.map((transaction) => {
+                  const invoice = invoices.find(
+                    (row) => row.id === transaction.invoiceId,
+                  );
+                  return (
+                    <div
+                      key={transaction.id}
+                      className="flex items-center gap-3 py-3"
+                    >
+                      <span className="grid size-10 place-items-center rounded-xl bg-[var(--surface-2)]">
+                        <Receipt size={17} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold">
+                          {formatCurrency(transaction.amount, currency)}
+                        </p>
+                        <p className="truncate text-xs text-[var(--muted)]">
+                          {invoice?.invoiceNumber || "Invoice"} ·{" "}
+                          {format(
+                            transaction.paymentDate.toDate(),
+                            "dd MMM yyyy",
+                          )}
+                        </p>
+                      </div>
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        aria-label="Download receipt"
+                        disabled={!invoice || !business}
+                        onClick={async () => {
+                          if (!invoice || !business) return;
+                          try {
+                            await downloadReceiptPdf(
+                              invoice,
+                              business,
+                              client,
+                              transaction,
+                            );
+                          } catch {
+                            toast.error("Could not generate receipt");
+                          }
+                        }}
+                      >
+                        <Download size={16} />
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <EmptyState
+                title="No receipts yet"
+                detail="Receipts appear here after a payment is recorded."
+              />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <h3 className="font-semibold">Client information</h3>
+        </CardHeader>
+        <CardContent className="grid gap-5 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <Info label="Contact" value={client.name} />
+          <Info label="Email" value={client.email || "Not provided"} />
+          <Info label="Phone" value={client.phone || "Not provided"} />
+          <Info
+            label="Business address"
+            value={client.businessAddress || client.address || "Not provided"}
+          />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-[.1em] text-[var(--muted)]">
+        {label}
+      </p>
+      <p className="mt-2 font-medium leading-6">{value}</p>
+    </div>
+  );
+}
+
 function ProductsView({
   products,
+  businesses,
   loading,
+  canCreate,
 }: {
   products: Product[];
+  businesses: Business[];
   loading: boolean;
+  canCreate: boolean;
 }) {
   if (loading) return <Loading />;
   return (
     <div className="space-y-5">
-      <div className="flex justify-end">
-        <ProductDialog />
-      </div>
+      {canCreate && (
+        <div className="flex justify-end">
+          <ProductDialog />
+        </div>
+      )}
       {products.length ? (
         <Card>
           <CardContent className="divide-y divide-[var(--border)] p-2">
@@ -617,7 +1000,12 @@ function ProductsView({
                   <p className="font-semibold">{p.name}</p>
                   <p className="text-sm text-[var(--muted)]">{p.description}</p>
                 </div>
-                <p className="font-semibold">{money.format(p.rate)}</p>
+                <p className="font-semibold">
+                  {formatCurrency(
+                    p.rate,
+                    currencyForBusiness(p.businessId, businesses),
+                  )}
+                </p>
               </div>
             ))}
           </CardContent>
@@ -626,7 +1014,7 @@ function ProductsView({
         <EmptyState
           title="No products yet"
           detail="Create products with reusable invoice descriptions and default rates."
-          action={<ProductDialog />}
+          action={canCreate ? <ProductDialog /> : undefined}
         />
       )}
     </div>
@@ -640,4 +1028,64 @@ function Loading() {
       ))}
     </div>
   );
+}
+
+function currencyForBusiness(businessId: string, businesses: Business[]) {
+  return (
+    businesses.find((business) => business.id === businessId)?.currency || "USD"
+  );
+}
+
+function formatGroupedTotals<T extends { businessId: string }>(
+  rows: T[],
+  businesses: Business[],
+  amount: (row: T) => number,
+) {
+  const totals = new Map<string, number>();
+  for (const row of rows) {
+    const currency = currencyForBusiness(row.businessId, businesses);
+    totals.set(currency, (totals.get(currency) || 0) + amount(row));
+  }
+  if (!totals.size) {
+    return formatCurrency(0, businesses[0]?.currency || "USD");
+  }
+  return Array.from(totals, ([currency, total]) =>
+    formatCurrency(total, currency),
+  ).join(" · ");
+}
+
+function formatExpenseTotals(expenses: Expense[]) {
+  const totals = new Map<string, number>();
+  for (const expense of expenses) {
+    const amount = expenseAmountInMonth(expense);
+    totals.set(expense.currency, (totals.get(expense.currency) || 0) + amount);
+  }
+  const nonZero = Array.from(totals).filter(([, total]) => total > 0);
+  return nonZero.length
+    ? nonZero
+        .map(([currency, total]) => formatCurrency(total, currency))
+        .join(" · ")
+    : formatCurrency(0, "USD");
+}
+
+function formatNetRevenue(
+  transactions: PaymentTransaction[],
+  businesses: Business[],
+  expenses: Expense[],
+) {
+  const totals = new Map<string, number>();
+  for (const transaction of transactions) {
+    const currency = currencyForBusiness(transaction.businessId, businesses);
+    totals.set(currency, (totals.get(currency) || 0) + transaction.amount);
+  }
+  for (const expense of expenses) {
+    totals.set(
+      expense.currency,
+      (totals.get(expense.currency) || 0) - expenseAmountInMonth(expense),
+    );
+  }
+  if (!totals.size) return formatCurrency(0, "USD");
+  return Array.from(totals, ([currency, total]) =>
+    formatCurrency(total, currency),
+  ).join(" · ");
 }

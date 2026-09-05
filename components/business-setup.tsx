@@ -9,9 +9,11 @@ import { createBusiness } from "@/lib/data";
 import { useAuth } from "@/contexts/auth-context";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { CurrencySelect } from "./currency-select";
 const schema = z.object({
   name: z.string().min(2),
   paymentInstructions: z.string(),
+  currency: z.string().length(3),
 });
 type Form = z.infer<typeof schema>;
 export function BusinessSetup() {
@@ -20,10 +22,12 @@ export function BusinessSetup() {
   const {
     register,
     handleSubmit,
+    watch,
+    setValue,
     formState: { isSubmitting, errors },
   } = useForm<Form>({
     resolver: zodResolver(schema),
-    defaultValues: { name: "", paymentInstructions: "" },
+    defaultValues: { name: "", paymentInstructions: "", currency: "USD" },
   });
   return (
     <main className="grid min-h-screen place-items-center p-4">
@@ -42,14 +46,15 @@ export function BusinessSetup() {
           className="mt-8 space-y-5"
           onSubmit={handleSubmit(async (v) => {
             if (!user) return;
-          try {
-            setSubmitError("");
-            await createBusiness(user.uid, v);
-            toast.success("Business created");
-          } catch (e) {
-            const message = e instanceof Error ? e.message : "Could not create business";
-            setSubmitError(message);
-            toast.error(message);
+            try {
+              setSubmitError("");
+              await createBusiness(user.uid, v);
+              toast.success("Business created");
+            } catch (e) {
+              const message =
+                e instanceof Error ? e.message : "Could not create business";
+              setSubmitError(message);
+              toast.error(message);
             }
           })}
         >
@@ -63,14 +68,31 @@ export function BusinessSetup() {
             )}
           </label>
           <label className="block text-sm font-medium">
+            Currency
+            <CurrencySelect
+              className="mt-1.5"
+              value={watch("currency")}
+              onValueChange={(value) =>
+                setValue("currency", value, { shouldValidate: true })
+              }
+            />
+          </label>
+          <label className="block text-sm font-medium">
             Payment instructions
             <textarea
               className="focus-ring mt-1.5 min-h-28 w-full rounded-xl border border-[var(--border)] p-3.5 text-[15px]"
               {...register("paymentInstructions")}
             />
           </label>
-        {submitError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{submitError}</p>}
-        <Button className="w-full" disabled={isSubmitting}>
+          {submitError && (
+            <p
+              role="alert"
+              className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+            >
+              {submitError}
+            </p>
+          )}
+          <Button className="w-full" disabled={isSubmitting}>
             Create business
           </Button>
         </form>

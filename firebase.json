@@ -13,9 +13,9 @@
   },
   "auth": {
     "providers": {
-      "emailPassword": true,
+      "emailPassword": false,
       "googleSignIn": {
-        "oAuthBrandDisplayName": "Business",
+        "oAuthBrandDisplayName": "Beez",
         "supportEmail": "nahabwe.edwin12@gmail.com"
       }
     }

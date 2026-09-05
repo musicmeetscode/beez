@@ -7,9 +7,14 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import { recordPayment } from "@/lib/data";
-import { downloadInvoicePdf } from "@/lib/invoice-pdf";
-import { useBusiness } from "@/contexts/business-context";
-import type { Client, Invoice, PaymentTransaction } from "@/lib/types";
+import { formatCurrency } from "@/lib/currency";
+import { downloadInvoicePdf, downloadReceiptPdf } from "@/lib/invoice-pdf";
+import type {
+  Business,
+  Client,
+  Invoice,
+  PaymentTransaction,
+} from "@/lib/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Card, CardContent } from "./ui/card";
@@ -27,10 +32,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-const money = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-});
 const schema = z.object({
   amount: z.coerce.number().positive(),
   paymentMethod: z.string().min(1),
@@ -40,16 +41,18 @@ const schema = z.object({
 type Form = z.infer<typeof schema>;
 export function InvoiceDetail({
   invoice,
+  business,
   client,
   transactions,
   onBack,
 }: {
   invoice: Invoice;
+  business?: Business;
   client?: Client;
   transactions: PaymentTransaction[];
   onBack: () => void;
 }) {
-  const { activeBusiness } = useBusiness();
+  const currency = business?.currency || "USD";
   const [open, setOpen] = useState(false);
   const {
     register,
@@ -81,14 +84,14 @@ export function InvoiceDetail({
           <p className="text-sm text-[var(--muted)]">Invoice</p>
           <h2 className="text-xl font-semibold">{invoice.invoiceNumber}</h2>
         </div>
-        {activeBusiness && (
+        {business && (
           <Button
             variant="outline"
             onClick={async () => {
               try {
                 await downloadInvoicePdf(
                   invoice,
-                  activeBusiness,
+                  business,
                   client,
                   transactions,
                 );
@@ -118,11 +121,26 @@ export function InvoiceDetail({
               className="mt-6 space-y-4"
               onSubmit={handleSubmit(async (v) => {
                 try {
-                  await recordPayment(invoice, {
+                  const transaction = await recordPayment(invoice, {
                     ...v,
                     paymentDate: new Date(`${v.paymentDate}T12:00:00`),
                   });
                   toast.success("Payment recorded");
+                  if (business) {
+                    try {
+                      await downloadReceiptPdf(
+                        invoice,
+                        business,
+                        client,
+                        transaction,
+                        invoice.balanceDue - transaction.amount,
+                      );
+                    } catch {
+                      toast.error(
+                        "Payment saved, but the receipt could not be downloaded",
+                      );
+                    }
+                  }
                   reset();
                   setOpen(false);
                   onBack();
@@ -194,16 +212,16 @@ export function InvoiceDetail({
       <Card className="overflow-hidden">
         <div className="flex flex-col justify-between gap-6 bg-[var(--dark)] p-6 text-white md:flex-row">
           <div>
-            {activeBusiness?.logoUrl && (
+            {business?.logoUrl && (
               <img
-                src={activeBusiness.logoUrl}
-                alt={`${activeBusiness.name} logo`}
+                src={business.logoUrl}
+                alt={`${business.name} logo`}
                 className="mb-4 h-10 max-w-32 object-contain object-left"
               />
             )}
-            <p className="text-xl font-semibold">{activeBusiness?.name}</p>
+            <p className="text-xl font-semibold">{business?.name}</p>
             <p className="mt-2 max-w-lg whitespace-pre-line text-sm leading-6 text-[#aeb7b9]">
-              {activeBusiness?.paymentInstructions}
+              {business?.paymentInstructions}
             </p>
           </div>
           <div className="md:text-right">
@@ -211,7 +229,7 @@ export function InvoiceDetail({
               Balance due
             </p>
             <p className="mt-2 text-3xl font-semibold">
-              {money.format(invoice.balanceDue)}
+              {formatCurrency(invoice.balanceDue, currency)}
             </p>
           </div>
         </div>
@@ -224,10 +242,17 @@ export function InvoiceDetail({
               <p className="mt-2 font-semibold">
                 {client?.name || "Deleted client"}
               </p>
+              {client?.businessName && (
+                <p className="mt-1 text-sm font-medium">
+                  {client.businessName}
+                </p>
+              )}
               <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
                 {client?.email}
                 <br />
-                {client?.address}
+                {client?.phone}
+                <br />
+                {client?.businessAddress || client?.address}
               </p>
             </div>
             <div className="grid grid-cols-2 gap-4 md:text-right">
@@ -260,9 +285,11 @@ export function InvoiceDetail({
                   <tr key={n} className="border-b border-[var(--border)]">
                     <td className="py-4 font-medium">{i.description}</td>
                     <td className="py-4 text-right">{i.quantity}</td>
-                    <td className="py-4 text-right">{money.format(i.rate)}</td>
+                    <td className="py-4 text-right">
+                      {formatCurrency(i.rate, currency)}
+                    </td>
                     <td className="py-4 text-right font-semibold">
-                      {money.format(i.amount)}
+                      {formatCurrency(i.amount, currency)}
                     </td>
                   </tr>
                 ))}
@@ -272,23 +299,26 @@ export function InvoiceDetail({
           <div className="ml-auto mt-6 w-full max-w-sm space-y-3 text-sm">
             <div className="flex justify-between">
               <span className="text-[var(--muted)]">Subtotal</span>
-              <span>{money.format(invoice.subtotal)}</span>
+              <span>{formatCurrency(invoice.subtotal, currency)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-[var(--muted)]">
                 Tax ({invoice.taxRate}%)
               </span>
               <span>
-                {money.format(invoice.totalAmount - invoice.subtotal)}
+                {formatCurrency(
+                  invoice.totalAmount - invoice.subtotal,
+                  currency,
+                )}
               </span>
             </div>
             <div className="flex justify-between border-t border-[var(--border)] pt-3 text-lg font-semibold">
               <span>Total</span>
-              <span>{money.format(invoice.totalAmount)}</span>
+              <span>{formatCurrency(invoice.totalAmount, currency)}</span>
             </div>
             <div className="flex justify-between rounded-xl bg-[var(--accent)] p-3 font-semibold">
               <span>Balance due</span>
-              <span>{money.format(invoice.balanceDue)}</span>
+              <span>{formatCurrency(invoice.balanceDue, currency)}</span>
             </div>
           </div>
           {transactions.length > 0 && (
@@ -296,7 +326,10 @@ export function InvoiceDetail({
               <h3 className="font-semibold">Payment history</h3>
               <div className="mt-3 divide-y divide-[var(--border)]">
                 {transactions.map((t) => (
-                  <div key={t.id} className="flex justify-between py-3 text-sm">
+                  <div
+                    key={t.id}
+                    className="flex items-center justify-between gap-3 py-3 text-sm"
+                  >
                     <div>
                       <p className="font-medium">{t.paymentMethod}</p>
                       <p className="text-xs text-[var(--muted)]">
@@ -304,7 +337,32 @@ export function InvoiceDetail({
                         {t.reference ? ` · ${t.reference}` : ""}
                       </p>
                     </div>
-                    <p className="font-semibold">{money.format(t.amount)}</p>
+                    <div className="flex items-center gap-3">
+                      <p className="font-semibold">
+                        {formatCurrency(t.amount, currency)}
+                      </p>
+                      {business && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={async () => {
+                            try {
+                              await downloadReceiptPdf(
+                                invoice,
+                                business,
+                                client,
+                                t,
+                              );
+                            } catch {
+                              toast.error("Could not generate receipt");
+                            }
+                          }}
+                        >
+                          <Download size={15} />
+                          Receipt
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

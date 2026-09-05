@@ -15,7 +15,14 @@ import {
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { requireFirebase } from "./firebase";
-import type { Business, Client, Invoice, Product } from "./types";
+import type {
+  Business,
+  Client,
+  Expense,
+  Invoice,
+  PaymentTransaction,
+  Product,
+} from "./types";
 const mapDoc = <T extends { id: string }>(d: {
   id: string;
   data(): DocumentData;
@@ -38,7 +45,29 @@ export function listenBusinesses(
       next(
         s.docs
           .map((d) => mapDoc<Business>(d))
-          .sort((a, b) => timestampMillis(a.createdAt) - timestampMillis(b.createdAt)),
+          .sort(
+            (a, b) =>
+              timestampMillis(a.createdAt) - timestampMillis(b.createdAt),
+          ),
+      ),
+    error,
+  );
+}
+export function listenExpenses(
+  ownerUid: string,
+  next: (rows: Expense[]) => void,
+  error: (e: Error) => void,
+): Unsubscribe {
+  const { db } = requireFirebase();
+  return onSnapshot(
+    query(collection(db, "expenses"), where("ownerUid", "==", ownerUid)),
+    (snapshot) =>
+      next(
+        snapshot.docs
+          .map((document) => mapDoc<Expense>(document))
+          .sort(
+            (a, b) => timestampMillis(b.startsOn) - timestampMillis(a.startsOn),
+          ),
       ),
     error,
   );
@@ -54,12 +83,21 @@ export function listenByBusiness<T extends { id: string }>(
     query(collection(db, name), where("businessId", "==", businessId)),
     (s) =>
       next(
-        s.docs.map((d) => mapDoc<T>(d)).sort((a, b) => {
-          const aData = a as DocumentData;
-          const bData = b as DocumentData;
-          const field = name === "transactions" ? "paymentDate" : "createdAt";
-          return timestampMillis(bData[field]) - timestampMillis(aData[field]);
-        }),
+        s.docs
+          .map((d) => {
+            const row = mapDoc<T>(d);
+            return name === "invoices"
+              ? (normalizeInvoice(row as unknown as Invoice) as unknown as T)
+              : row;
+          })
+          .sort((a, b) => {
+            const aData = a as DocumentData;
+            const bData = b as DocumentData;
+            const field = name === "transactions" ? "paymentDate" : "createdAt";
+            return (
+              timestampMillis(bData[field]) - timestampMillis(aData[field])
+            );
+          }),
       ),
     error,
   );
@@ -68,9 +106,46 @@ export function listenByBusiness<T extends { id: string }>(
 function timestampMillis(value: unknown) {
   return value instanceof Timestamp ? value.toMillis() : 0;
 }
+
+function normalizeInvoice(invoice: Invoice): Invoice {
+  const items = Array.isArray(invoice.items)
+    ? invoice.items.map((item) => ({
+        ...item,
+        quantity: Number(item.quantity) || 0,
+        rate: Number(item.rate) || 0,
+        amount:
+          Number(item.amount) ||
+          (Number(item.quantity) || 0) * (Number(item.rate) || 0),
+      }))
+    : [];
+  const itemSubtotal = items.reduce((sum, item) => sum + item.amount, 0);
+  const storedSubtotal = Number(invoice.subtotal) || 0;
+  const subtotal = storedSubtotal > 0 ? storedSubtotal : itemSubtotal;
+  const taxRate = Number(invoice.taxRate) || 0;
+  const calculatedTotal = subtotal * (1 + taxRate / 100);
+  const storedTotal = Number(invoice.totalAmount) || 0;
+  const totalAmount = storedTotal > 0 ? storedTotal : calculatedTotal;
+  const amountPaid = Number(invoice.amountPaid) || 0;
+  const storedBalance = Number(invoice.balanceDue) || 0;
+  const balanceDue =
+    invoice.status === "Paid"
+      ? 0
+      : storedBalance > 0
+        ? storedBalance
+        : Math.max(0, totalAmount - amountPaid);
+  return {
+    ...invoice,
+    items,
+    subtotal,
+    taxRate,
+    totalAmount,
+    amountPaid,
+    balanceDue,
+  };
+}
 export async function createBusiness(
   ownerUid: string,
-  input: Pick<Business, "name" | "paymentInstructions">,
+  input: Pick<Business, "name" | "paymentInstructions"> & { currency?: string },
 ) {
   const { db } = requireFirebase();
   const r = doc(collection(db, "businesses"));
@@ -80,13 +155,16 @@ export async function createBusiness(
     name: input.name,
     logoUrl: "",
     paymentInstructions: input.paymentInstructions,
+    currency: input.currency || "USD",
     createdAt: serverTimestamp(),
   });
   return r;
 }
 export async function updateBusiness(
   id: string,
-  input: Partial<Pick<Business, "name" | "paymentInstructions" | "logoUrl">>,
+  input: Partial<
+    Pick<Business, "name" | "paymentInstructions" | "logoUrl" | "currency">
+  >,
 ) {
   const { db } = requireFirebase();
   return updateDoc(doc(db, "businesses", id), input);
@@ -111,6 +189,23 @@ export async function createClient(
     createdAt: serverTimestamp(),
   });
   return r;
+}
+export async function updateClient(
+  id: string,
+  input: Partial<
+    Pick<
+      Client,
+      | "name"
+      | "email"
+      | "phone"
+      | "address"
+      | "businessName"
+      | "businessAddress"
+    >
+  >,
+) {
+  const { db } = requireFirebase();
+  return updateDoc(doc(db, "clients", id), input);
 }
 export async function createProduct(
   businessId: string,
@@ -140,6 +235,20 @@ export async function createInvoice(
   });
   return r;
 }
+export async function createExpense(
+  ownerUid: string,
+  input: Omit<Expense, "id" | "ownerUid" | "createdAt">,
+) {
+  const { db } = requireFirebase();
+  const expenseRef = doc(collection(db, "expenses"));
+  await setDoc(expenseRef, {
+    id: expenseRef.id,
+    ownerUid,
+    ...input,
+    createdAt: serverTimestamp(),
+  });
+  return expenseRef;
+}
 export async function recordPayment(
   invoice: Invoice,
   input: {
@@ -152,10 +261,14 @@ export async function recordPayment(
   const { db } = requireFirebase();
   const invoiceRef = doc(db, "invoices", invoice.id);
   const paymentRef = doc(collection(db, "transactions"));
+  const paymentDate = Timestamp.fromDate(input.paymentDate);
   await runTransaction(db, async (tx) => {
     const fresh = await tx.get(invoiceRef);
     if (!fresh.exists()) throw new Error("Invoice no longer exists.");
-    const current = fresh.data() as Invoice;
+    const current = normalizeInvoice({
+      id: fresh.id,
+      ...fresh.data(),
+    } as Invoice);
     if (input.amount <= 0 || input.amount > current.balanceDue)
       throw new Error(
         "Payment must be greater than zero and no more than the balance due.",
@@ -170,7 +283,7 @@ export async function recordPayment(
       amount: input.amount,
       paymentMethod: input.paymentMethod,
       reference: input.reference,
-      paymentDate: Timestamp.fromDate(input.paymentDate),
+      paymentDate,
     });
     tx.update(invoiceRef, {
       amountPaid,
@@ -178,5 +291,14 @@ export async function recordPayment(
       status: balanceDue === 0 ? "Paid" : "Partial",
     });
   });
-  return paymentRef.id;
+  return {
+    id: paymentRef.id,
+    businessId: invoice.businessId,
+    invoiceId: invoice.id,
+    clientId: invoice.clientId,
+    amount: input.amount,
+    paymentMethod: input.paymentMethod,
+    reference: input.reference,
+    paymentDate,
+  } satisfies PaymentTransaction;
 }

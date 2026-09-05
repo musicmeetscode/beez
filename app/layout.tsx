@@ -1,11 +1,29 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 export const metadata: Metadata = {
-  title: "Ledgerly — Invoices, clients & payments",
+  title: "Beez — Invoices, clients & payments",
   description: "A focused workspace for running every part of your billing.",
+  applicationName: "Beez",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/icons/apple-touch-icon.png",
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Beez",
+  },
+};
+export const viewport: Viewport = {
+  themeColor: "#171d20",
+  colorScheme: "light",
 };
 export default function RootLayout({
   children,

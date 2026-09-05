@@ -4,10 +4,18 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, type Resolver } from "react-hook-form";
 import { toast } from "sonner";
-import { createClient, createProduct } from "@/lib/data";
+import { createClient, createProduct, updateClient } from "@/lib/data";
+import type { Client } from "@/lib/types";
 import { useBusiness } from "@/contexts/business-context";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 import {
   Dialog,
   DialogContent,
@@ -18,18 +26,27 @@ import {
 const clientSchema = z.object({
   name: z.string().min(2),
   email: z.union([z.literal(""), z.email()]),
-  phone: z.string(),
-  address: z.string(),
+  phone: z.string().min(3, "Enter a phone number"),
+  businessName: z.string().min(2, "Enter the business or organisation"),
+  businessAddress: z.string().min(2, "Enter the business address"),
 });
 type ClientForm = z.infer<typeof clientSchema>;
 export function ClientDialog({
   trigger,
   onCreated,
+  businessId,
 }: {
   trigger?: React.ReactNode;
   onCreated?: (id: string) => void;
+  businessId?: string;
 }) {
-  const { activeBusinessId } = useBusiness();
+  const { activeBusinessId, businesses } = useBusiness();
+  const [selectedBusinessId, setSelectedBusinessId] = useState("");
+  const targetBusinessId =
+    businessId ||
+    (activeBusinessId === "all"
+      ? selectedBusinessId || businesses[0]?.id || ""
+      : activeBusinessId);
   const [open, setOpen] = useState(false);
   const {
     register,
@@ -38,7 +55,13 @@ export function ClientDialog({
     formState: { errors, isSubmitting },
   } = useForm<ClientForm>({
     resolver: zodResolver(clientSchema),
-    defaultValues: { name: "", email: "", phone: "", address: "" },
+    defaultValues: {
+      name: "",
+      email: "",
+      phone: "",
+      businessName: "",
+      businessAddress: "",
+    },
   });
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -54,7 +77,10 @@ export function ClientDialog({
           className="mt-6 grid gap-4"
           onSubmit={handleSubmit(async (v) => {
             try {
-              const r = await createClient(activeBusinessId, v);
+              const r = await createClient(targetBusinessId, {
+                ...v,
+                address: v.businessAddress,
+              });
               toast.success("Client added");
               reset();
               setOpen(false);
@@ -66,23 +92,142 @@ export function ClientDialog({
             }
           })}
         >
-          <Field label="Client name" error={errors.name?.message}>
+          {activeBusinessId === "all" && !businessId && (
+            <Field label="Business">
+              <Select
+                value={targetBusinessId}
+                onValueChange={setSelectedBusinessId}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose a business" />
+                </SelectTrigger>
+                <SelectContent>
+                  {businesses.map((business) => (
+                    <SelectItem key={business.id} value={business.id}>
+                      {business.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+          )}
+          <Field label="Contact name" error={errors.name?.message}>
             <Input autoFocus {...register("name")} />
           </Field>
-          <Field label="Email" error={errors.email?.message}>
-            <Input type="email" {...register("email")} />
-          </Field>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Phone">
-              <Input {...register("phone")} />
+            <Field label="Phone" error={errors.phone?.message}>
+              <Input type="tel" {...register("phone")} />
             </Field>
-            <Field label="Address">
-              <Input {...register("address")} />
+            <Field label="Email" error={errors.email?.message}>
+              <Input type="email" {...register("email")} />
             </Field>
           </div>
-          <Button className="mt-2" disabled={isSubmitting || !activeBusinessId}>
+          <Field
+            label="Business / organisation name"
+            error={errors.businessName?.message}
+          >
+            <Input {...register("businessName")} />
+          </Field>
+          <Field
+            label="Business address"
+            error={errors.businessAddress?.message}
+          >
+            <Input {...register("businessAddress")} />
+          </Field>
+          <Button className="mt-2" disabled={isSubmitting || !targetBusinessId}>
             Save client
           </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function EditClientDialog({ client }: { client: Client }) {
+  const [open, setOpen] = useState(false);
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<ClientForm>({
+    resolver: zodResolver(clientSchema),
+    defaultValues: {
+      name: client.name,
+      email: client.email,
+      phone: client.phone,
+      businessName: client.businessName || "",
+      businessAddress: client.businessAddress || client.address || "",
+    },
+  });
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(value) => {
+        setOpen(value);
+        if (value) {
+          reset({
+            name: client.name,
+            email: client.email,
+            phone: client.phone,
+            businessName: client.businessName || "",
+            businessAddress: client.businessAddress || client.address || "",
+          });
+        }
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button variant="outline">Edit client</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogTitle>Edit client</DialogTitle>
+        <DialogDescription>
+          Updates the contact details used on future invoice and receipt
+          downloads.
+        </DialogDescription>
+        <form
+          className="mt-6 grid gap-4"
+          onSubmit={handleSubmit(async (values) => {
+            try {
+              await updateClient(client.id, {
+                ...values,
+                address: values.businessAddress,
+              });
+              toast.success("Client updated");
+              setOpen(false);
+            } catch (error) {
+              toast.error(
+                error instanceof Error
+                  ? error.message
+                  : "Could not update client",
+              );
+            }
+          })}
+        >
+          <Field label="Contact name" error={errors.name?.message}>
+            <Input autoFocus {...register("name")} />
+          </Field>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Phone" error={errors.phone?.message}>
+              <Input type="tel" {...register("phone")} />
+            </Field>
+            <Field label="Email" error={errors.email?.message}>
+              <Input type="email" {...register("email")} />
+            </Field>
+          </div>
+          <Field
+            label="Business / organisation name"
+            error={errors.businessName?.message}
+          >
+            <Input {...register("businessName")} />
+          </Field>
+          <Field
+            label="Business address"
+            error={errors.businessAddress?.message}
+          >
+            <Input {...register("businessAddress")} />
+          </Field>
+          <Button disabled={isSubmitting}>Save changes</Button>
         </form>
       </DialogContent>
     </Dialog>
@@ -94,8 +239,15 @@ const productSchema = z.object({
   rate: z.coerce.number().min(0),
 });
 type ProductForm = z.infer<typeof productSchema>;
-export function ProductDialog({ trigger }: { trigger?: React.ReactNode }) {
+export function ProductDialog({
+  trigger,
+  businessId,
+}: {
+  trigger?: React.ReactNode;
+  businessId?: string;
+}) {
   const { activeBusinessId } = useBusiness();
+  const targetBusinessId = businessId || activeBusinessId;
   const [open, setOpen] = useState(false);
   const {
     register,
@@ -120,7 +272,7 @@ export function ProductDialog({ trigger }: { trigger?: React.ReactNode }) {
           className="mt-6 grid gap-4"
           onSubmit={handleSubmit(async (v) => {
             try {
-              await createProduct(activeBusinessId, v);
+              await createProduct(targetBusinessId, v);
               toast.success("Product added");
               reset();
               setOpen(false);
@@ -143,7 +295,12 @@ export function ProductDialog({ trigger }: { trigger?: React.ReactNode }) {
           <Field label="Default rate" error={errors.rate?.message}>
             <Input type="number" step="0.01" {...register("rate")} />
           </Field>
-          <Button className="mt-2" disabled={isSubmitting || !activeBusinessId}>
+          <Button
+            className="mt-2"
+            disabled={
+              isSubmitting || !targetBusinessId || targetBusinessId === "all"
+            }
+          >
             Save product
           </Button>
         </form>

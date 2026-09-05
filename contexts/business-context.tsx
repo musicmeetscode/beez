@@ -30,7 +30,9 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
       (rows) => {
         setBusinesses(rows);
         setActive((id) =>
-          rows.some((b) => b.id === id) ? id : rows[0]?.id || "",
+          id === "all" || rows.some((b) => b.id === id)
+            ? id
+            : rows[0]?.id || "",
         );
         setLoading(false);
       },

@@ -13,7 +13,8 @@ dist-ssr
 .next
 out
 *.local
-
+.agents/
+.claude/
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
