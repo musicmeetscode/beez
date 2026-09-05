@@ -1,7 +1,9 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   runTransaction,
@@ -10,11 +12,13 @@ import {
   Timestamp,
   updateDoc,
   where,
+  writeBatch,
   type DocumentData,
   type Unsubscribe,
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { requireFirebase } from "./firebase";
+import { nextOccurrence } from "./expenses";
 import type {
   Business,
   Client,
@@ -248,6 +252,104 @@ export async function createExpense(
     createdAt: serverTimestamp(),
   });
   return expenseRef;
+}
+
+export async function createRecurringExpenseSeries(
+  ownerUid: string,
+  input: Omit<Expense, "id" | "ownerUid" | "createdAt">,
+  occurrences: number,
+) {
+  const { db } = requireFirebase();
+  const batch = writeBatch(db);
+  const groupId = `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  let currentDate = input.startsOn.toDate();
+
+  const count = Math.max(1, Math.min(occurrences, 60));
+  for (let i = 0; i < count; i++) {
+    const expenseRef = doc(collection(db, "expenses"));
+    batch.set(expenseRef, {
+      id: expenseRef.id,
+      ownerUid,
+      ...input,
+      startsOn: Timestamp.fromDate(new Date(currentDate)),
+      isRecurring: false,
+      recurringInterval: input.recurringInterval,
+      recurringGroupId: groupId,
+      recurringIndex: i + 1,
+      recurringTotal: count,
+      createdAt: serverTimestamp(),
+    });
+    if (input.recurringInterval) {
+      currentDate = nextOccurrence(currentDate, input.recurringInterval);
+    }
+  }
+
+  await batch.commit();
+  return groupId;
+}
+
+export async function deleteExpense(
+  id: string,
+  recurringGroupId?: string,
+  deleteAllInSeries: boolean = false,
+) {
+  const { db } = requireFirebase();
+  if (deleteAllInSeries && recurringGroupId) {
+    const q = query(
+      collection(db, "expenses"),
+      where("recurringGroupId", "==", recurringGroupId),
+    );
+    const snap = await getDocs(q);
+    const batch = writeBatch(db);
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  } else {
+    await deleteDoc(doc(db, "expenses", id));
+  }
+}
+
+export async function generateMissingRecurringRecords(
+  ownerUid: string,
+  legacyExpense: Expense,
+  totalOccurrences: number = 12,
+) {
+  if (!legacyExpense.recurringInterval) return;
+  const { db } = requireFirebase();
+  const groupId =
+    legacyExpense.recurringGroupId ||
+    `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const batch = writeBatch(db);
+
+  // Update legacy record to be index 1 in series
+  batch.update(doc(db, "expenses", legacyExpense.id), {
+    isRecurring: false,
+    recurringGroupId: groupId,
+    recurringIndex: 1,
+    recurringTotal: totalOccurrences,
+  });
+
+  let currentDate = legacyExpense.startsOn.toDate();
+  for (let i = 1; i < totalOccurrences; i++) {
+    currentDate = nextOccurrence(currentDate, legacyExpense.recurringInterval);
+    const expenseRef = doc(collection(db, "expenses"));
+    batch.set(expenseRef, {
+      id: expenseRef.id,
+      ownerUid,
+      name: legacyExpense.name,
+      category: legacyExpense.category,
+      amount: legacyExpense.amount,
+      currency: legacyExpense.currency,
+      startsOn: Timestamp.fromDate(new Date(currentDate)),
+      isRecurring: false,
+      recurringInterval: legacyExpense.recurringInterval,
+      recurringGroupId: groupId,
+      recurringIndex: i + 1,
+      recurringTotal: totalOccurrences,
+      createdAt: serverTimestamp(),
+    });
+  }
+
+  await batch.commit();
 }
 export async function recordPayment(
   invoice: Invoice,

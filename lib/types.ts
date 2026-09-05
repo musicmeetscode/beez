@@ -79,5 +79,8 @@ export interface Expense {
   startsOn: Timestamp;
   isRecurring: boolean;
   recurringInterval: RecurringInterval;
+  recurringGroupId?: string;
+  recurringIndex?: number;
+  recurringTotal?: number;
   createdAt: Timestamp;
 }

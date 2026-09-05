@@ -29,8 +29,8 @@ import { useAuth } from "@/contexts/auth-context";
 import { useBusiness } from "@/contexts/business-context";
 import { useBusinessCollection } from "@/hooks/use-business-collection";
 import { useExpenses } from "@/hooks/use-expenses";
+import { useCurrencyExchange } from "@/contexts/currency-context";
 import { formatCurrency } from "@/lib/currency";
-import { expenseAmountInMonth } from "@/lib/expenses";
 import type {
   Business,
   Client,
@@ -61,6 +61,7 @@ import { InvoiceDetail } from "./invoice-detail";
 import { downloadReceiptPdf } from "@/lib/invoice-pdf";
 import { SettingsView } from "./settings-view";
 import { ExpensesView } from "./expenses-view";
+import { FinancialChart } from "./financial-chart";
 type View =
   "dashboard" | "invoices" | "clients" | "products" | "expenses" | "settings";
 const nav = [
@@ -123,6 +124,9 @@ export function Workspace() {
     (client) => client.id === selectedClientId,
   );
   const isAllBusinesses = activeBusinessId === "all";
+  const targetCurrency = isAllBusinesses
+    ? businesses[0]?.currency || "USD"
+    : activeBusiness?.currency || "USD";
   const go = (v: View) => {
     setView(v);
     setMobile(false);
@@ -203,30 +207,46 @@ export function Workspace() {
             <Menu />
           </button>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-semibold uppercase tracking-[.12em] text-[var(--muted)]">
+            <p className="truncate text-[15px] font-bold tracking-tight text-[var(--foreground)]">
               {isAllBusinesses ? "All businesses" : activeBusiness?.name}
             </p>
-            <h1 className="truncate text-lg font-semibold tracking-[-.02em]">
+            <h1 className="truncate text-xs font-semibold uppercase tracking-[.12em] text-[var(--muted)]">
               {view[0].toUpperCase() + view.slice(1)}
             </h1>
           </div>
-          <Select value={activeBusinessId} onValueChange={setActiveBusinessId}>
-            <SelectTrigger
-              aria-label="Switch business"
-              className="w-[150px] md:w-[220px]"
-            >
-              <Building2 size={16} />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All businesses</SelectItem>
-              {businesses.map((b) => (
-                <SelectItem key={b.id} value={b.id}>
-                  {b.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-2">
+            <span className="hidden md:inline-flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] shadow-xs">
+              <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+              {targetCurrency}
+              <span className="text-[10px] text-[var(--muted)] font-normal">rates active</span>
+            </span>
+            <Select value={activeBusinessId} onValueChange={setActiveBusinessId}>
+              <SelectTrigger
+                aria-label="Switch business"
+                className="h-10 w-auto min-w-[200px] md:min-w-[240px] max-w-[340px] px-3 font-semibold gap-2.5 shadow-xs"
+              >
+                <div className="flex items-center gap-2 truncate text-sm font-semibold">
+                  <Building2 size={16} className="shrink-0 text-[var(--muted)]" />
+                  <span className="truncate">
+                    {isAllBusinesses
+                      ? "All businesses"
+                      : activeBusiness?.name || "Select business"}
+                  </span>
+                </div>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All businesses</SelectItem>
+                {businesses.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    <span className="font-semibold">{b.name}</span>
+                    <span className="ml-2 text-xs text-[var(--muted)]">
+                      ({b.currency || "USD"})
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <Button
             size="sm"
             disabled={!businesses.length}
@@ -252,6 +272,7 @@ export function Workspace() {
               clients={clients}
               businesses={businesses}
               expenses={expenses}
+              targetCurrency={targetCurrency}
               loading={
                 invoicesLoading || transactionsLoading || expensesLoading
               }
@@ -268,6 +289,7 @@ export function Workspace() {
                 transactions={transactions.filter(
                   (t) => t.invoiceId === selected.id,
                 )}
+                targetCurrency={targetCurrency}
                 onBack={() => setSelected(null)}
               />
             ) : (
@@ -275,6 +297,7 @@ export function Workspace() {
                 invoices={invoices}
                 clients={clients}
                 businesses={businesses}
+                targetCurrency={targetCurrency}
                 loading={invoicesLoading}
                 onSelect={setSelected}
                 onNew={() => openComposer()}
@@ -292,6 +315,7 @@ export function Workspace() {
                   (transaction) => transaction.clientId === selectedClient.id,
                 )}
                 businesses={businesses}
+                targetCurrency={targetCurrency}
                 onBack={() => setSelectedClientId("")}
                 onNewInvoice={() => openComposer(selectedClient.id)}
                 onSelectInvoice={(invoice) => {
@@ -305,6 +329,7 @@ export function Workspace() {
                 clients={clients}
                 invoices={invoices}
                 businesses={businesses}
+                targetCurrency={targetCurrency}
                 loading={clientsLoading}
                 canCreate={businesses.length > 0}
                 onSelect={setSelectedClientId}
@@ -319,7 +344,11 @@ export function Workspace() {
             />
           )}{" "}
           {view === "expenses" && (
-            <ExpensesView expenses={expenses} loading={expensesLoading} />
+            <ExpensesView
+              expenses={expenses}
+              targetCurrency={targetCurrency}
+              loading={expensesLoading}
+            />
           )}{" "}
           {view === "settings" &&
             (isAllBusinesses ? (
@@ -402,6 +431,7 @@ function Dashboard({
   clients,
   businesses,
   expenses,
+  targetCurrency,
   loading,
 }: {
   invoices: Invoice[];
@@ -409,24 +439,18 @@ function Dashboard({
   clients: Client[];
   businesses: Business[];
   expenses: Expense[];
+  targetCurrency: string;
   loading: boolean;
 }) {
+  const { convert } = useCurrencyExchange();
   const paid = invoices.filter((i) => i.status === "Paid").length;
-  const monthlyTransactions = transactions.filter((transaction) => {
-    const paymentDate = transaction.paymentDate?.toDate();
-    const now = new Date();
-    return (
-      paymentDate?.getMonth() === now.getMonth() &&
-      paymentDate?.getFullYear() === now.getFullYear()
-    );
-  });
-  const recent = invoices.slice(0, 5);
+  const recent = invoices.slice(0, 3);
   if (loading) return <Loading />;
   return (
     <div className="space-y-6 animate-rise">
       <div>
         <p className="text-sm text-[var(--muted)]">
-          A live view of billing across this business.
+          A live view of billing across this business. Reflected in {targetCurrency}.
         </p>
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -437,48 +461,72 @@ function Dashboard({
             invoices,
             businesses,
             (invoice) => invoice.balanceDue,
+            targetCurrency,
+            convert,
           )}
         />
         <Metric
           icon={Receipt}
-          label="Net revenue this month"
-          value={formatNetRevenue(monthlyTransactions, businesses, expenses)}
+          label="Lifetime net revenue"
+          value={formatLifetimeNetRevenue(
+            transactions,
+            businesses,
+            expenses,
+            targetCurrency,
+            convert,
+          )}
         />
         <Metric
           icon={TrendingDown}
-          label="Projected expenses"
-          value={formatExpenseTotals(expenses)}
+          label="Lifetime expenses"
+          value={formatLifetimeExpenses(expenses, targetCurrency, convert)}
         />
         <Metric
           icon={CheckCircle2}
           label="Paid invoices"
           value={String(paid)}
         />
-        {/* <Metric
-          icon={Users}
-          label="Active clients"
-          value={String(clients.length)}
-        /> */}
       </div>
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <h2 className="font-semibold">Recent invoices</h2>
-        </CardHeader>
-        <CardContent>
-          {recent.length ? (
-            <InvoiceRows
-              invoices={recent}
-              clients={clients}
-              businesses={businesses}
-            />
-          ) : (
-            <EmptyState
-              title="No invoices yet"
-              detail="Create your first invoice to start tracking what you’re owed."
-            />
-          )}
-        </CardContent>
-      </Card>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="lg:col-span-5 xl:col-span-5">
+          <Card className="h-full flex flex-col justify-between">
+            <CardHeader className="flex flex-row items-center justify-between pb-3">
+              <div>
+                <h2 className="font-semibold text-base">Recent invoices</h2>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">
+                  Latest billing activity
+                </p>
+              </div>
+            </CardHeader>
+            <CardContent className="flex-1">
+              {recent.length ? (
+                <InvoiceRows
+                  invoices={recent}
+                  clients={clients}
+                  businesses={businesses}
+                  targetCurrency={targetCurrency}
+                />
+              ) : (
+                <EmptyState
+                  title="No invoices yet"
+                  detail="Create your first invoice to start tracking what you’re owed."
+                />
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="lg:col-span-7 xl:col-span-7">
+          <FinancialChart
+            invoices={invoices}
+            transactions={transactions}
+            expenses={expenses}
+            businesses={businesses}
+            targetCurrency={targetCurrency}
+          />
+        </div>
+      </div>
     </div>
   );
 }
@@ -513,21 +561,23 @@ function InvoicesView({
   invoices,
   clients,
   businesses,
+  targetCurrency,
   loading,
+  canCreate,
   onSelect,
   onNew,
-  canCreate,
 }: {
   invoices: Invoice[];
   clients: Client[];
   businesses: Business[];
+  targetCurrency: string;
   loading: boolean;
-  onSelect: (i: Invoice) => void;
-  onNew: () => void;
   canCreate: boolean;
+  onSelect: (invoice: Invoice) => void;
+  onNew: () => void;
 }) {
-  const [status, setStatus] = useState("All");
   const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<string>("All");
   const rows = invoices.filter(
     (i) =>
       (status === "All" || i.status === status) &&
@@ -573,6 +623,7 @@ function InvoicesView({
               invoices={rows}
               clients={clients}
               businesses={businesses}
+              targetCurrency={targetCurrency}
               onSelect={onSelect}
             />
           </CardContent>
@@ -602,57 +653,66 @@ function InvoiceRows({
   invoices,
   clients,
   businesses,
+  targetCurrency,
   onSelect,
 }: {
   invoices: Invoice[];
   clients: Client[];
   businesses: Business[];
+  targetCurrency?: string;
   onSelect?: (i: Invoice) => void;
 }) {
+  const { convert } = useCurrencyExchange();
   return (
     <div className="divide-y divide-[var(--border)]">
-      {invoices.map((i) => (
-        <button
-          key={i.id}
-          onClick={() => onSelect?.(i)}
-          className="focus-ring grid w-full grid-cols-[1fr_auto] items-center gap-3 rounded-xl px-3 py-4 text-left hover:bg-[var(--surface-2)] md:grid-cols-[1fr_1fr_140px_140px_24px]"
-        >
-          <div>
-            <p className="font-semibold">{i.invoiceNumber}</p>
-            <p className="mt-1 text-xs text-[var(--muted)]">
-              Due{" "}
-              {i.dueDate?.toDate
-                ? format(i.dueDate.toDate(), "dd MMM yyyy")
-                : "—"}
+      {invoices.map((i) => {
+        const invoiceCurrency = currencyForBusiness(i.businessId, businesses);
+        const displayCurrency = targetCurrency || invoiceCurrency;
+        const convertedTotal = convert(i.totalAmount, invoiceCurrency, displayCurrency);
+        const convertedBalance = convert(i.balanceDue, invoiceCurrency, displayCurrency);
+        const isDifferent = invoiceCurrency.toUpperCase() !== displayCurrency.toUpperCase();
+
+        return (
+          <button
+            key={i.id}
+            onClick={() => onSelect?.(i)}
+            className="focus-ring grid w-full grid-cols-[1fr_auto] items-center gap-3 rounded-xl px-3 py-4 text-left hover:bg-[var(--surface-2)] md:grid-cols-[1fr_1fr_140px_140px_24px]"
+          >
+            <div>
+              <p className="font-semibold">{i.invoiceNumber}</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                Due{" "}
+                {i.dueDate?.toDate
+                  ? format(i.dueDate.toDate(), "dd MMM yyyy")
+                  : "—"}
+              </p>
+            </div>
+            <p className="hidden text-sm md:block">
+              {clients.find((c) => c.id === i.clientId)?.name || "Deleted client"}
             </p>
-          </div>
-          <p className="hidden text-sm md:block">
-            {clients.find((c) => c.id === i.clientId)?.name || "Deleted client"}
-          </p>
-          <Status value={i.status} />
-          <div className="text-right">
-            <p className="font-semibold">
-              {formatCurrency(
-                i.totalAmount,
-                currencyForBusiness(i.businessId, businesses),
-              )}
-            </p>
-            <p className="text-xs text-[var(--muted)]">
-              {formatCurrency(
-                i.balanceDue,
-                currencyForBusiness(i.businessId, businesses),
-              )}{" "}
-              due
-            </p>
-          </div>
-          {onSelect && (
-            <ChevronRight
-              className="hidden text-[var(--muted)] md:block"
-              size={18}
-            />
-          )}
-        </button>
-      ))}
+            <Status value={i.status} />
+            <div className="text-right">
+              <p className="font-semibold">
+                {formatCurrency(convertedTotal, displayCurrency)}
+              </p>
+              <p className="text-xs text-[var(--muted)]">
+                {formatCurrency(convertedBalance, displayCurrency)} due
+                {isDifferent && (
+                  <span className="block text-[10px] text-[var(--muted)]">
+                    (orig: {formatCurrency(i.balanceDue, invoiceCurrency)})
+                  </span>
+                )}
+              </p>
+            </div>
+            {onSelect && (
+              <ChevronRight
+                className="hidden text-[var(--muted)] md:block"
+                size={18}
+              />
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -677,6 +737,7 @@ function ClientsView({
   clients,
   invoices,
   businesses,
+  targetCurrency,
   loading,
   canCreate,
   onSelect,
@@ -684,10 +745,12 @@ function ClientsView({
   clients: Client[];
   invoices: Invoice[];
   businesses: Business[];
+  targetCurrency: string;
   loading: boolean;
   canCreate: boolean;
   onSelect: (clientId: string) => void;
 }) {
+  const { convert } = useCurrencyExchange();
   if (loading) return <Loading />;
   return (
     <div className="space-y-5">
@@ -698,45 +761,46 @@ function ClientsView({
       )}
       {clients.length ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {clients.map((c) => (
-            <button
-              key={c.id}
-              className="focus-ring rounded-2xl text-left"
-              onClick={() => onSelect(c.id)}
-            >
-              <Card className="h-full transition hover:-translate-y-0.5 hover:shadow-md">
-                <CardContent>
-                  <div className="flex items-start justify-between">
-                    <span className="grid size-11 place-items-center rounded-xl bg-[var(--dark)] font-semibold text-white">
-                      {c.name.slice(0, 2).toUpperCase()}
-                    </span>
-                    <span className="text-xs text-[var(--muted)]">
-                      {invoices.filter((i) => i.clientId === c.id).length}{" "}
-                      invoices
-                    </span>
-                  </div>
-                  <h3 className="mt-4 font-semibold">{c.name}</h3>
-                  {c.businessName && (
-                    <p className="mt-1 truncate text-sm font-medium">
-                      {c.businessName}
+          {clients.map((c) => {
+            const clientInvoices = invoices.filter((i) => i.clientId === c.id);
+            const totalOutstanding = clientInvoices.reduce((sum, inv) => {
+              const invCur = currencyForBusiness(inv.businessId, businesses);
+              return sum + convert(inv.balanceDue, invCur, targetCurrency);
+            }, 0);
+
+            return (
+              <button
+                key={c.id}
+                className="focus-ring rounded-2xl text-left"
+                onClick={() => onSelect(c.id)}
+              >
+                <Card className="h-full transition hover:-translate-y-0.5 hover:shadow-md">
+                  <CardContent>
+                    <div className="flex items-start justify-between">
+                      <span className="grid size-11 place-items-center rounded-xl bg-[var(--dark)] font-semibold text-white">
+                        {c.name.slice(0, 2).toUpperCase()}
+                      </span>
+                      <span className="text-xs text-[var(--muted)]">
+                        {clientInvoices.length} invoices
+                      </span>
+                    </div>
+                    <h3 className="mt-4 font-semibold">{c.name}</h3>
+                    {c.businessName && (
+                      <p className="mt-1 truncate text-sm font-medium">
+                        {c.businessName}
+                      </p>
+                    )}
+                    <p className="mt-1 truncate text-sm text-[var(--muted)]">
+                      {c.email || c.phone || "No contact details"}
                     </p>
-                  )}
-                  <p className="mt-1 truncate text-sm text-[var(--muted)]">
-                    {c.email || c.phone || "No contact details"}
-                  </p>
-                  <p className="mt-4 text-sm font-semibold">
-                    {formatCurrency(
-                      invoices
-                        .filter((i) => i.clientId === c.id)
-                        .reduce((s, i) => s + i.balanceDue, 0),
-                      currencyForBusiness(c.businessId, businesses),
-                    )}{" "}
-                    outstanding
-                  </p>
-                </CardContent>
-              </Card>
-            </button>
-          ))}
+                    <p className="mt-4 text-sm font-semibold">
+                      {formatCurrency(totalOutstanding, targetCurrency)} outstanding
+                    </p>
+                  </CardContent>
+                </Card>
+              </button>
+            );
+          })}
         </div>
       ) : (
         <EmptyState
@@ -758,6 +822,7 @@ function ClientDetail({
   invoices,
   transactions,
   businesses,
+  targetCurrency,
   onBack,
   onNewInvoice,
   onSelectInvoice,
@@ -766,20 +831,25 @@ function ClientDetail({
   invoices: Invoice[];
   transactions: PaymentTransaction[];
   businesses: Business[];
+  targetCurrency: string;
   onBack: () => void;
   onNewInvoice: () => void;
   onSelectInvoice: (invoice: Invoice) => void;
 }) {
+  const { convert } = useCurrencyExchange();
   const business = businesses.find((row) => row.id === client.businessId);
-  const currency = business?.currency || "USD";
-  const outstanding = invoices.reduce(
-    (total, invoice) => total + invoice.balanceDue,
-    0,
-  );
-  const received = transactions.reduce(
-    (total, transaction) => total + transaction.amount,
-    0,
-  );
+  const displayCurrency = targetCurrency || business?.currency || "USD";
+
+  const outstanding = invoices.reduce((total, invoice) => {
+    const invCur = currencyForBusiness(invoice.businessId, businesses);
+    return total + convert(invoice.balanceDue, invCur, displayCurrency);
+  }, 0);
+
+  const received = transactions.reduce((total, transaction) => {
+    const txnCur = currencyForBusiness(transaction.businessId, businesses);
+    return total + convert(transaction.amount, txnCur, displayCurrency);
+  }, 0);
+
   return (
     <div className="space-y-6 animate-rise">
       <div className="flex flex-wrap items-center gap-3">
@@ -832,12 +902,12 @@ function ClientDetail({
         <Metric
           icon={WalletCards}
           label="Outstanding"
-          value={formatCurrency(outstanding, currency)}
+          value={formatCurrency(outstanding, displayCurrency)}
         />
         <Metric
           icon={Receipt}
           label="Payments received"
-          value={formatCurrency(received, currency)}
+          value={formatCurrency(received, displayCurrency)}
         />
       </div>
 
@@ -852,6 +922,7 @@ function ClientDetail({
                 invoices={invoices}
                 clients={[client]}
                 businesses={businesses}
+                targetCurrency={displayCurrency}
                 onSelect={onSelectInvoice}
               />
             ) : (
@@ -882,6 +953,18 @@ function ClientDetail({
                   const invoice = invoices.find(
                     (row) => row.id === transaction.invoiceId,
                   );
+                  const txnCur = currencyForBusiness(
+                    transaction.businessId,
+                    businesses,
+                  );
+                  const convertedAmount = convert(
+                    transaction.amount,
+                    txnCur,
+                    displayCurrency,
+                  );
+                  const isDifferent =
+                    txnCur.toUpperCase() !== displayCurrency.toUpperCase();
+
                   return (
                     <div
                       key={transaction.id}
@@ -892,7 +975,12 @@ function ClientDetail({
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="font-semibold">
-                          {formatCurrency(transaction.amount, currency)}
+                          {formatCurrency(convertedAmount, displayCurrency)}
+                          {isDifferent && (
+                            <span className="ml-1.5 text-xs font-normal text-[var(--muted)]">
+                              (orig: {formatCurrency(transaction.amount, txnCur)})
+                            </span>
+                          )}
                         </p>
                         <p className="truncate text-xs text-[var(--muted)]">
                           {invoice?.invoiceNumber || "Invoice"} ·{" "}
@@ -1040,52 +1128,45 @@ function formatGroupedTotals<T extends { businessId: string }>(
   rows: T[],
   businesses: Business[],
   amount: (row: T) => number,
+  targetCurrency: string,
+  convert: (amount: number, from: string, to: string) => number,
 ) {
-  const totals = new Map<string, number>();
+  let total = 0;
   for (const row of rows) {
     const currency = currencyForBusiness(row.businessId, businesses);
-    totals.set(currency, (totals.get(currency) || 0) + amount(row));
+    total += convert(amount(row), currency, targetCurrency);
   }
-  if (!totals.size) {
-    return formatCurrency(0, businesses[0]?.currency || "USD");
-  }
-  return Array.from(totals, ([currency, total]) =>
-    formatCurrency(total, currency),
-  ).join(" · ");
+  return formatCurrency(total, targetCurrency);
 }
 
-function formatExpenseTotals(expenses: Expense[]) {
-  const totals = new Map<string, number>();
+function formatLifetimeExpenses(
+  expenses: Expense[],
+  targetCurrency: string,
+  convert: (amount: number, from: string, to: string) => number,
+) {
+  let total = 0;
   for (const expense of expenses) {
-    const amount = expenseAmountInMonth(expense);
-    totals.set(expense.currency, (totals.get(expense.currency) || 0) + amount);
+    total += convert(expense.amount, expense.currency, targetCurrency);
   }
-  const nonZero = Array.from(totals).filter(([, total]) => total > 0);
-  return nonZero.length
-    ? nonZero
-        .map(([currency, total]) => formatCurrency(total, currency))
-        .join(" · ")
-    : formatCurrency(0, "USD");
+  return formatCurrency(total, targetCurrency);
 }
 
-function formatNetRevenue(
+function formatLifetimeNetRevenue(
   transactions: PaymentTransaction[],
   businesses: Business[],
   expenses: Expense[],
+  targetCurrency: string,
+  convert: (amount: number, from: string, to: string) => number,
 ) {
-  const totals = new Map<string, number>();
+  let totalRevenue = 0;
   for (const transaction of transactions) {
     const currency = currencyForBusiness(transaction.businessId, businesses);
-    totals.set(currency, (totals.get(currency) || 0) + transaction.amount);
+    totalRevenue += convert(transaction.amount, currency, targetCurrency);
   }
+  let totalExpense = 0;
   for (const expense of expenses) {
-    totals.set(
-      expense.currency,
-      (totals.get(expense.currency) || 0) - expenseAmountInMonth(expense),
-    );
+    totalExpense += convert(expense.amount, expense.currency, targetCurrency);
   }
-  if (!totals.size) return formatCurrency(0, "USD");
-  return Array.from(totals, ([currency, total]) =>
-    formatCurrency(total, currency),
-  ).join(" · ");
+  const net = totalRevenue - totalExpense;
+  return formatCurrency(net, targetCurrency);
 }

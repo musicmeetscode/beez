@@ -8,6 +8,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import { recordPayment } from "@/lib/data";
 import { formatCurrency } from "@/lib/currency";
+import { useCurrencyExchange } from "@/contexts/currency-context";
 import { downloadInvoicePdf, downloadReceiptPdf } from "@/lib/invoice-pdf";
 import type {
   Business,
@@ -44,14 +45,17 @@ export function InvoiceDetail({
   business,
   client,
   transactions,
+  targetCurrency,
   onBack,
 }: {
   invoice: Invoice;
   business?: Business;
   client?: Client;
   transactions: PaymentTransaction[];
+  targetCurrency?: string;
   onBack: () => void;
 }) {
+  const { convert } = useCurrencyExchange();
   const currency = business?.currency || "USD";
   const [open, setOpen] = useState(false);
   const {
@@ -231,6 +235,11 @@ export function InvoiceDetail({
             <p className="mt-2 text-3xl font-semibold">
               {formatCurrency(invoice.balanceDue, currency)}
             </p>
+            {targetCurrency && targetCurrency.toUpperCase() !== currency.toUpperCase() && (
+              <p className="mt-1 text-xs font-medium text-[#aeb7b9]">
+                ≈ {formatCurrency(convert(invoice.balanceDue, currency, targetCurrency), targetCurrency)} ({targetCurrency})
+              </p>
+            )}
           </div>
         </div>
         <CardContent className="p-5 md:p-7">

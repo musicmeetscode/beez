@@ -1,8 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { format } from "date-fns";
-import { CalendarDays, Plus, Repeat2, TrendingDown } from "lucide-react";
+import {
+  CalendarDays,
+  Plus,
+  Repeat2,
+  TrendingDown,
+  Trash2,
+  Sparkles,
+  AlertCircle,
+} from "lucide-react";
 import { Timestamp } from "firebase/firestore";
 import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,12 +18,18 @@ import { z } from "zod";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/auth-context";
 import { useBusiness } from "@/contexts/business-context";
-import { createExpense } from "@/lib/data";
-import { expenseAmountInMonth } from "@/lib/expenses";
+import { useCurrencyExchange } from "@/contexts/currency-context";
+import {
+  createExpense,
+  createRecurringExpenseSeries,
+  deleteExpense,
+  generateMissingRecurringRecords,
+} from "@/lib/data";
+import { expenseAmountInMonth, nextOccurrence } from "@/lib/expenses";
 import { formatCurrency } from "@/lib/currency";
 import type { Expense } from "@/lib/types";
 import { Button } from "./ui/button";
-import { Card, CardContent, CardHeader } from "./ui/card";
+import { Card, CardContent } from "./ui/card";
 import { Input } from "./ui/input";
 import { Skeleton } from "./ui/skeleton";
 import { Switch } from "./ui/switch";
@@ -45,6 +59,7 @@ const schema = z
     startsOn: z.string().min(1, "Choose a start date"),
     isRecurring: z.boolean(),
     recurringInterval: z.enum(["weekly", "monthly", "yearly"]).nullable(),
+    occurrences: z.coerce.number().min(1).max(60).default(12),
   })
   .refine((value) => !value.isRecurring || value.recurringInterval, {
     path: ["recurringInterval"],
@@ -54,12 +69,77 @@ type Form = z.infer<typeof schema>;
 
 export function ExpensesView({
   expenses,
+  targetCurrency: propTargetCurrency,
   loading,
 }: {
   expenses: Expense[];
+  targetCurrency?: string;
   loading: boolean;
 }) {
-  const projected = groupMonthlyExpenses(expenses);
+  const { user } = useAuth();
+  const { activeBusiness, businesses } = useBusiness();
+  const { convert } = useCurrencyExchange();
+  const [migrating, setMigrating] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const targetCurrency =
+    propTargetCurrency ||
+    activeBusiness?.currency ||
+    businesses[0]?.currency ||
+    "USD";
+
+  const totalLifetimeExpenses = useMemo(() => {
+    return expenses.reduce((sum, expense) => {
+      return sum + convert(expense.amount, expense.currency, targetCurrency);
+    }, 0);
+  }, [expenses, convert, targetCurrency]);
+
+  const legacyRecurring = useMemo(() => {
+    return expenses.filter(
+      (e) => e.isRecurring && !e.recurringGroupId && Boolean(e.recurringInterval),
+    );
+  }, [expenses]);
+
+  const handleGenerateAllRecords = async () => {
+    if (!user || migrating) return;
+    setMigrating(true);
+    try {
+      for (const legacy of legacyRecurring) {
+        await generateMissingRecurringRecords(user.uid, legacy, 12);
+      }
+      toast.success(
+        `Generated scheduled records for ${legacyRecurring.length} recurring expense(s)`,
+      );
+    } catch (e) {
+      toast.error(
+        e instanceof Error ? e.message : "Failed to generate records",
+      );
+    } finally {
+      setMigrating(false);
+    }
+  };
+
+  const handleDelete = async (
+    expense: Expense,
+    deleteAllSeries: boolean = false,
+  ) => {
+    try {
+      setDeletingId(expense.id);
+      await deleteExpense(expense.id, expense.recurringGroupId, deleteAllSeries);
+      toast.success(
+        deleteAllSeries
+          ? "Recurring series deleted"
+          : "Expense record deleted",
+      );
+    } catch (e) {
+      toast.error(
+        e instanceof Error ? e.message : "Could not delete expense",
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -69,17 +149,47 @@ export function ExpensesView({
       </div>
     );
   }
+
   return (
     <div className="space-y-5 animate-rise">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="mr-auto">
           <h2 className="text-xl font-semibold">Expenses</h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Account-wide costs are included in net revenue automatically.
+            Account-wide costs reflected in {targetCurrency} and deducted from net
+            revenue.
           </p>
         </div>
-        <ExpenseDialog />
+        <ExpenseDialog targetCurrency={targetCurrency} />
       </div>
+
+      {legacyRecurring.length > 0 && (
+        <div className="flex flex-col gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 shrink-0 text-amber-600" size={18} />
+            <div>
+              <p className="font-semibold">
+                Generate records for recurring expenses
+              </p>
+              <p className="mt-0.5 text-xs text-amber-800">
+                You have {legacyRecurring.length} recurring expense(s) saved as
+                single items. Generate individual records for all set times so each
+                month has its own entry.
+              </p>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0 border-amber-400 bg-white text-amber-900 hover:bg-amber-100"
+            disabled={migrating}
+            onClick={handleGenerateAllRecords}
+          >
+            <Sparkles size={15} />
+            {migrating ? "Generating…" : "Generate all records"}
+          </Button>
+        </div>
+      )}
 
       <Card className="overflow-hidden bg-[var(--dark)] text-white">
         <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center">
@@ -87,84 +197,161 @@ export function ExpensesView({
             <TrendingDown size={22} />
           </span>
           <div>
-            <p className="text-sm text-[#aeb7b9]">Projected this month</p>
+            <p className="text-sm text-[#aeb7b9]">
+              Lifetime expenses ({targetCurrency})
+            </p>
             <p className="mt-1 text-2xl font-semibold">
-              {projected.length
-                ? projected
-                    .map(([currency, total]) => formatCurrency(total, currency))
-                    .join(" · ")
-                : formatCurrency(0, "USD")}
+              {formatCurrency(totalLifetimeExpenses, targetCurrency)}
             </p>
           </div>
           <p className="max-w-md text-sm leading-6 text-[#aeb7b9] sm:ml-auto sm:text-right">
-            Includes upcoming recurring charges scheduled before the end of the
-            month.
+            All expenses recorded across your business converted to {targetCurrency} at live exchange rates.
           </p>
         </CardContent>
       </Card>
 
       {expenses.length ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {expenses.map((expense) => (
-            <Card key={expense.id}>
-              <CardContent>
-                <div className="flex items-start gap-3">
-                  <span className="grid size-11 place-items-center rounded-xl bg-[var(--surface-2)]">
-                    {expense.isRecurring ? (
-                      <Repeat2 size={18} />
-                    ) : (
-                      <CalendarDays size={18} />
-                    )}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h3 className="truncate font-semibold">
-                          {expense.name}
-                        </h3>
-                        <p className="mt-1 text-sm text-[var(--muted)]">
-                          {expense.category}
+          {expenses.map((expense) => {
+            const convertedAmount = convert(
+              expense.amount,
+              expense.currency,
+              targetCurrency,
+            );
+            const isDifferentCurrency =
+              expense.currency.toUpperCase() !== targetCurrency.toUpperCase();
+
+            return (
+              <Card key={expense.id} className="relative group">
+                <CardContent className="pt-6">
+                  <div className="flex items-start gap-3">
+                    <span className="grid size-11 place-items-center rounded-xl bg-[var(--surface-2)] shrink-0">
+                      {expense.recurringGroupId || expense.isRecurring ? (
+                        <Repeat2 size={18} />
+                      ) : (
+                        <CalendarDays size={18} />
+                      )}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h3 className="truncate font-semibold text-[15px]">
+                            {expense.name}
+                          </h3>
+                          <p className="mt-0.5 text-xs text-[var(--muted)]">
+                            {expense.category}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="font-semibold">
+                            {formatCurrency(convertedAmount, targetCurrency)}
+                          </p>
+                          {isDifferentCurrency && (
+                            <p className="text-[11px] text-[var(--muted)]">
+                              Orig:{" "}
+                              {formatCurrency(
+                                expense.amount,
+                                expense.currency,
+                              )}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        {expense.recurringGroupId ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+                            <Repeat2 size={12} />
+                            #{expense.recurringIndex} of{" "}
+                            {expense.recurringTotal || "?"} (
+                            {expense.recurringInterval})
+                          </span>
+                        ) : expense.isRecurring ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                            <Repeat2 size={12} />
+                            Repeats {expense.recurringInterval}
+                          </span>
+                        ) : null}
+
+                        <p className="text-xs text-[var(--muted)]">
+                          {format(expense.startsOn.toDate(), "dd MMM yyyy")}
                         </p>
                       </div>
-                      <p className="whitespace-nowrap font-semibold">
-                        {formatCurrency(expense.amount, expense.currency)}
-                      </p>
+
+                      <div className="mt-4 flex items-center justify-between border-t border-[var(--border)] pt-3">
+                        <p className="text-[11px] text-[var(--muted)]">
+                          {expense.isRecurring && !expense.recurringGroupId
+                            ? `${formatCurrency(
+                              convert(
+                                expenseAmountInMonth(expense),
+                                expense.currency,
+                                targetCurrency,
+                              ),
+                              targetCurrency,
+                            )} in current month`
+                            : "Scheduled expense"}
+                        </p>
+
+                        <div className="flex items-center gap-1">
+                          {expense.recurringGroupId && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+                              disabled={deletingId === expense.id}
+                              onClick={() => {
+                                if (
+                                  confirm(
+                                    `Delete all ${expense.recurringTotal || ""} scheduled records in this recurring series?`,
+                                  )
+                                ) {
+                                  handleDelete(expense, true);
+                                }
+                              }}
+                            >
+                              Delete series
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 text-[var(--muted)] hover:bg-red-50 hover:text-red-600"
+                            disabled={deletingId === expense.id}
+                            aria-label="Delete this expense"
+                            onClick={() => {
+                              if (confirm("Delete this expense record?")) {
+                                handleDelete(expense, false);
+                              }
+                            }}
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        </div>
+                      </div>
                     </div>
-                    <p className="mt-4 text-xs font-medium text-[var(--muted)]">
-                      {expense.isRecurring
-                        ? `Repeats ${expense.recurringInterval} from ${format(expense.startsOn.toDate(), "dd MMM yyyy")}`
-                        : `Scheduled for ${format(expense.startsOn.toDate(), "dd MMM yyyy")}`}
-                    </p>
-                    {expense.isRecurring && (
-                      <p className="mt-2 text-sm font-semibold">
-                        {formatCurrency(
-                          expenseAmountInMonth(expense),
-                          expense.currency,
-                        )}{" "}
-                        projected this month
-                      </p>
-                    )}
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       ) : (
         <EmptyState
           title="No expenses yet"
           detail="Add one-time or recurring costs to see true net revenue."
-          action={<ExpenseDialog />}
+          action={<ExpenseDialog targetCurrency={targetCurrency} />}
         />
       )}
     </div>
   );
 }
 
-function ExpenseDialog() {
+function ExpenseDialog({ targetCurrency }: { targetCurrency?: string }) {
   const { user } = useAuth();
   const { businesses } = useBusiness();
   const [open, setOpen] = useState(false);
+  const defaultCurr = targetCurrency || businesses[0]?.currency || "USD";
+
   const {
     register,
     handleSubmit,
@@ -174,9 +361,33 @@ function ExpenseDialog() {
     formState: { errors, isSubmitting },
   } = useForm<Form>({
     resolver: zodResolver(schema) as Resolver<Form>,
-    defaultValues: defaults(businesses[0]?.currency),
+    defaultValues: defaults(defaultCurr),
   });
+
   const recurring = watch("isRecurring");
+  const recurringInterval = watch("recurringInterval");
+  const occurrences = watch("occurrences") || 12;
+  const startsOn = watch("startsOn");
+
+  // Calculate schedule preview
+  const schedulePreview = useMemo(() => {
+    if (!recurring || !recurringInterval || !startsOn) return null;
+    try {
+      const startDate = new Date(`${startsOn}T12:00:00`);
+      let endDate = startDate;
+      for (let i = 1; i < occurrences; i++) {
+        endDate = nextOccurrence(endDate, recurringInterval);
+      }
+      return {
+        startDate,
+        endDate,
+        count: occurrences,
+      };
+    } catch {
+      return null;
+    }
+  }, [recurring, recurringInterval, occurrences, startsOn]);
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -188,25 +399,51 @@ function ExpenseDialog() {
       <DialogContent>
         <DialogTitle>Add expense</DialogTitle>
         <DialogDescription>
-          Expenses apply across your account and reduce dashboard net revenue.
+          Expenses reflect across your business in {defaultCurr} and reduce
+          dashboard net revenue.
         </DialogDescription>
         <form
           className="mt-6 grid gap-4"
           onSubmit={handleSubmit(async (values) => {
             if (!user) return;
             try {
-              await createExpense(user.uid, {
-                ...values,
-                amount: Number(values.amount),
-                startsOn: Timestamp.fromDate(
-                  new Date(`${values.startsOn}T12:00:00`),
-                ),
-                recurringInterval: values.isRecurring
-                  ? values.recurringInterval
-                  : null,
-              });
-              toast.success("Expense added");
-              reset(defaults(businesses[0]?.currency));
+              const amount = Number(values.amount);
+              const startDate = Timestamp.fromDate(
+                new Date(`${values.startsOn}T12:00:00`),
+              );
+
+              if (values.isRecurring && values.recurringInterval) {
+                const count = Number(values.occurrences) || 12;
+                await createRecurringExpenseSeries(
+                  user.uid,
+                  {
+                    name: values.name,
+                    category: values.category,
+                    amount,
+                    currency: values.currency,
+                    startsOn: startDate,
+                    isRecurring: false,
+                    recurringInterval: values.recurringInterval,
+                  },
+                  count,
+                );
+                toast.success(
+                  `Created ${count} recurring expense records for all set times`,
+                );
+              } else {
+                await createExpense(user.uid, {
+                  name: values.name,
+                  category: values.category,
+                  amount,
+                  currency: values.currency,
+                  startsOn: startDate,
+                  isRecurring: false,
+                  recurringInterval: null,
+                });
+                toast.success("Expense added");
+              }
+
+              reset(defaults(defaultCurr));
               setOpen(false);
             } catch (error) {
               toast.error(
@@ -218,7 +455,7 @@ function ExpenseDialog() {
           })}
         >
           <Field label="Expense name" error={errors.name?.message}>
-            <Input autoFocus {...register("name")} />
+            <Input autoFocus placeholder="e.g. Server hosting, Rent" {...register("name")} />
           </Field>
           <Field label="Category" error={errors.category?.message}>
             <Input
@@ -255,7 +492,7 @@ function ExpenseDialog() {
               <div>
                 <p className="text-sm font-medium">Recurring expense</p>
                 <p className="mt-1 text-xs text-[var(--muted)]">
-                  Future occurrences are deducted before they are due.
+                  Creates scheduled expense records for all the set times.
                 </p>
               </div>
               <Switch
@@ -264,35 +501,83 @@ function ExpenseDialog() {
               />
             </div>
             {recurring && (
-              <div className="mt-4">
-                <Select
-                  value={watch("recurringInterval") || undefined}
-                  onValueChange={(value) =>
-                    setValue(
-                      "recurringInterval",
-                      value as Form["recurringInterval"],
-                      { shouldValidate: true },
-                    )
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Repeat every…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="weekly">Week</SelectItem>
-                    <SelectItem value="monthly">Month</SelectItem>
-                    <SelectItem value="yearly">Year</SelectItem>
-                  </SelectContent>
-                </Select>
-                {errors.recurringInterval && (
-                  <p className="mt-1 text-xs text-red-600">
-                    {errors.recurringInterval.message}
-                  </p>
+              <div className="mt-4 space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-medium mb-1.5 text-[var(--muted)]">
+                      Repeat every
+                    </label>
+                    <Select
+                      value={watch("recurringInterval") || undefined}
+                      onValueChange={(value) =>
+                        setValue(
+                          "recurringInterval",
+                          value as Form["recurringInterval"],
+                          { shouldValidate: true },
+                        )
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Repeat every…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="weekly">Week</SelectItem>
+                        <SelectItem value="monthly">Month</SelectItem>
+                        <SelectItem value="yearly">Year</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {errors.recurringInterval && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.recurringInterval.message}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium mb-1.5 text-[var(--muted)]">
+                      Number of times to create
+                    </label>
+                    <Input
+                      type="number"
+                      min="1"
+                      max="60"
+                      {...register("occurrences")}
+                      placeholder="e.g. 12"
+                    />
+                    {errors.occurrences && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.occurrences.message}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {schedulePreview && (
+                  <div className="rounded-xl bg-[var(--surface-2)] p-3 text-xs leading-relaxed text-[var(--muted)]">
+                    <span className="font-semibold text-foreground">Schedule Preview: </span>
+                    Will create{" "}
+                    <strong className="text-foreground">{schedulePreview.count}</strong>{" "}
+                    expense records from{" "}
+                    <strong className="text-foreground">
+                      {format(schedulePreview.startDate, "dd MMM yyyy")}
+                    </strong>{" "}
+                    to{" "}
+                    <strong className="text-foreground">
+                      {format(schedulePreview.endDate, "dd MMM yyyy")}
+                    </strong>{" "}
+                    (one for each {recurringInterval?.replace("ly", "")}).
+                  </div>
                 )}
               </div>
             )}
           </div>
-          <Button disabled={isSubmitting}>Save expense</Button>
+          <Button disabled={isSubmitting}>
+            {isSubmitting
+              ? "Saving…"
+              : recurring
+                ? `Create ${occurrences || 12} expense records`
+                : "Save expense"}
+          </Button>
         </form>
       </DialogContent>
     </Dialog>
@@ -308,18 +593,8 @@ function defaults(currency = "USD"): Form {
     startsOn: new Date().toISOString().slice(0, 10),
     isRecurring: false,
     recurringInterval: null,
+    occurrences: 12,
   };
-}
-
-function groupMonthlyExpenses(expenses: Expense[]) {
-  const totals = new Map<string, number>();
-  for (const expense of expenses) {
-    totals.set(
-      expense.currency,
-      (totals.get(expense.currency) || 0) + expenseAmountInMonth(expense),
-    );
-  }
-  return Array.from(totals).filter(([, total]) => total > 0);
 }
 
 function Field({
