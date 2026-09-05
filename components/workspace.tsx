@@ -53,6 +53,7 @@ const nav = [
 ];
 export function Workspace() {
   const { logout, user } = useAuth();
+  const userName = user?.displayName || nameFromEmail(user?.email);
   const {
     businesses,
     activeBusinessId,
@@ -88,7 +89,7 @@ export function Workspace() {
     setSelected(null);
   };
   return (
-    <div className="min-h-screen bg-[var(--background)] lg:grid lg:grid-cols-[248px_1fr]">
+    <div className="min-h-screen bg-[var(--background)] lg:pl-[248px]">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] flex-col border-r border-[var(--border)] bg-[var(--dark)] p-5 text-white lg:flex">
         <Brand />
         <nav className="mt-10 space-y-1">
@@ -103,7 +104,7 @@ export function Workspace() {
         </nav>
         <div className="mt-auto">
           <div className="mb-4 rounded-2xl bg-white/6 p-4">
-            <p className="truncate text-sm font-medium">{user?.email}</p>
+            <p className="truncate text-sm font-medium">{userName}</p>
             <p className="mt-1 text-xs text-[#9ca5a6]">Signed in</p>
           </div>
           <Button
@@ -261,6 +262,16 @@ function Brand() {
       Ledgerly
     </div>
   );
+}
+
+function nameFromEmail(email?: string | null) {
+  if (!email) return "Account owner";
+  return email
+    .split("@")[0]
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 function NavButton({
   item,

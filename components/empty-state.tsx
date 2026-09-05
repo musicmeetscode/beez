@@ -1,4 +1,3 @@
-import { Inbox } from "lucide-react";
 export function EmptyState({
   title,
   detail,
@@ -9,12 +8,17 @@ export function EmptyState({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="grid min-h-56 place-items-center rounded-2xl border border-dashed border-[var(--border)] bg-white p-8 text-center">
+    <div className="grid min-h-[22rem] place-items-center rounded-2xl border border-dashed border-[var(--border)] bg-white p-8 text-center">
       <div>
-        <span className="mx-auto grid size-11 place-items-center rounded-2xl bg-[var(--surface-2)] text-[var(--muted)]">
-          <Inbox size={20} />
-        </span>
-        <h3 className="mt-4 font-semibold">{title}</h3>
+        {/* Generated specifically for Ledgerly's empty data states. */}
+        <img
+          src="/empty-ledger-line-art.png"
+          alt=""
+          width={180}
+          height={180}
+          className="mx-auto h-40 w-40 object-contain"
+        />
+        <h3 className="mt-3 font-semibold">{title}</h3>
         <p className="mx-auto mt-1 max-w-sm text-sm leading-6 text-[var(--muted)]">
           {detail}
         </p>
