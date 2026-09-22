@@ -22,6 +22,7 @@ import { nextOccurrence } from "./expenses";
 import type {
   Business,
   Client,
+  ClientProductLink,
   Expense,
   Invoice,
   PaymentTransaction,
@@ -77,7 +78,13 @@ export function listenExpenses(
   );
 }
 export function listenByBusiness<T extends { id: string }>(
-  name: "clients" | "products" | "invoices" | "transactions",
+  name:
+    | "clients"
+    | "products"
+    | "invoices"
+    | "transactions"
+    | "contracts"
+    | "clientProducts",
   businessId: string,
   next: (rows: T[]) => void,
   error: (e: Error) => void,
@@ -149,7 +156,12 @@ function normalizeInvoice(invoice: Invoice): Invoice {
 }
 export async function createBusiness(
   ownerUid: string,
-  input: Pick<Business, "name" | "paymentInstructions"> & { currency?: string },
+  input: Pick<Business, "name" | "paymentInstructions"> & {
+    currency?: string;
+    contractPaymentTerms?: string;
+    contractTerms?: string;
+    contractAddress?: string;
+  },
 ) {
   const { db } = requireFirebase();
   const r = doc(collection(db, "businesses"));
@@ -159,6 +171,9 @@ export async function createBusiness(
     name: input.name,
     logoUrl: "",
     paymentInstructions: input.paymentInstructions,
+    contractPaymentTerms: input.contractPaymentTerms || "",
+    contractTerms: input.contractTerms || "",
+    contractAddress: input.contractAddress || "Uganda",
     currency: input.currency || "USD",
     createdAt: serverTimestamp(),
   });
@@ -167,7 +182,16 @@ export async function createBusiness(
 export async function updateBusiness(
   id: string,
   input: Partial<
-    Pick<Business, "name" | "paymentInstructions" | "logoUrl" | "currency">
+    Pick<
+      Business,
+      | "name"
+      | "paymentInstructions"
+      | "contractPaymentTerms"
+      | "contractTerms"
+      | "contractAddress"
+      | "logoUrl"
+      | "currency"
+    >
   >,
 ) {
   const { db } = requireFirebase();
@@ -225,6 +249,38 @@ export async function createProduct(
   });
   return r;
 }
+export async function updateProduct(
+  id: string,
+  input: Pick<Product, "name" | "description" | "rate" | "termsOfUse">,
+) {
+  const { db } = requireFirebase();
+  return updateDoc(doc(db, "products", id), input);
+}
+export async function createClientProductLink(
+  businessId: string,
+  input: Omit<ClientProductLink, "id" | "businessId" | "createdAt">,
+) {
+  const { db } = requireFirebase();
+  const r = doc(collection(db, "clientProducts"));
+  await setDoc(r, {
+    id: r.id,
+    ...input,
+    businessId,
+    createdAt: serverTimestamp(),
+  });
+  return r;
+}
+export async function updateClientProductLink(
+  id: string,
+  input: Partial<Pick<ClientProductLink, "productId" | "amount" | "paymentDay">>,
+) {
+  const { db } = requireFirebase();
+  return updateDoc(doc(db, "clientProducts", id), input);
+}
+export async function deleteClientProductLink(id: string) {
+  const { db } = requireFirebase();
+  await deleteDoc(doc(db, "clientProducts", id));
+}
 export async function createInvoice(
   businessId: string,
   input: Omit<Invoice, "id" | "businessId" | "createdAt">,
@@ -238,6 +294,43 @@ export async function createInvoice(
     createdAt: serverTimestamp(),
   });
   return r;
+}
+export async function updateInvoice(
+  id: string,
+  input: Partial<
+    Pick<
+      Invoice,
+      | "clientId"
+      | "items"
+      | "subtotal"
+      | "taxRate"
+      | "totalAmount"
+      | "amountPaid"
+      | "balanceDue"
+      | "issueDate"
+      | "dueDate"
+      | "status"
+      | "isRecurring"
+      | "recurringInterval"
+      | "recurringGroupId"
+    >
+  >,
+) {
+  const { db } = requireFirebase();
+  return updateDoc(doc(db, "invoices", id), input);
+}
+export async function deleteInvoice(id: string) {
+  const { db } = requireFirebase();
+  await deleteDoc(doc(db, "invoices", id));
+}
+export async function updateExpense(
+  id: string,
+  input: Partial<
+    Pick<Expense, "name" | "category" | "amount" | "currency" | "startsOn">
+  >,
+) {
+  const { db } = requireFirebase();
+  return updateDoc(doc(db, "expenses", id), input);
 }
 export async function createExpense(
   ownerUid: string,

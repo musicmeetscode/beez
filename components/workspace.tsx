@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import {
@@ -34,6 +34,7 @@ import { formatCurrency } from "@/lib/currency";
 import type {
   Business,
   Client,
+  ClientProductLink,
   Expense,
   Invoice,
   PaymentTransaction,
@@ -59,14 +60,25 @@ import {
 import { InvoiceComposer } from "./invoice-composer";
 import { InvoiceDetail } from "./invoice-detail";
 import { downloadReceiptPdf } from "@/lib/invoice-pdf";
+import { deleteInvoice } from "@/lib/data";
+import { materializeDueRecurringInvoices } from "@/lib/invoices";
+import { ClientProductsCard } from "./client-products";
 import { SettingsView } from "./settings-view";
 import { ExpensesView } from "./expenses-view";
 import { FinancialChart } from "./financial-chart";
+import { ContractsView } from "./contracts-view";
 type View =
-  "dashboard" | "invoices" | "clients" | "products" | "expenses" | "settings";
+  | "dashboard"
+  | "invoices"
+  | "contracts"
+  | "clients"
+  | "products"
+  | "expenses"
+  | "settings";
 const nav = [
   { id: "dashboard" as const, label: "Dashboard", icon: LayoutDashboard },
   { id: "invoices" as const, label: "Invoices", icon: FileText },
+  { id: "contracts" as const, label: "Contracts", icon: FilePlus2 },
   { id: "clients" as const, label: "Clients", icon: Users },
   { id: "products" as const, label: "Products", icon: Package },
   { id: "expenses" as const, label: "Expenses", icon: TrendingDown },
@@ -97,6 +109,8 @@ export function Workspace() {
     loading: invoicesLoading,
     error: invoicesError,
   } = useBusinessCollection<Invoice>("invoices");
+  const { data: clientProducts, error: clientProductsError } =
+    useBusinessCollection<ClientProductLink>("clientProducts");
   const {
     data: transactions,
     loading: transactionsLoading,
@@ -112,14 +126,28 @@ export function Workspace() {
     clientsError ||
     productsError ||
     invoicesError ||
+    clientProductsError ||
     transactionsError ||
     expensesError;
   const [view, setView] = useState<View>("dashboard");
   const [mobile, setMobile] = useState(false);
   const [composer, setComposer] = useState(false);
   const [composerClientId, setComposerClientId] = useState<string>();
+  const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
+  const [prefillItem, setPrefillItem] = useState<
+    | {
+        productId: string;
+        description: string;
+        quantity: number;
+        rate: number;
+        issueDate?: string;
+        dueDate?: string;
+      }
+    | undefined
+  >();
   const [selected, setSelected] = useState<Invoice | null>(null);
   const [selectedClientId, setSelectedClientId] = useState("");
+  const [contractClientId, setContractClientId] = useState("");
   const selectedClient = clients.find(
     (client) => client.id === selectedClientId,
   );
@@ -132,11 +160,62 @@ export function Workspace() {
     setMobile(false);
     setSelected(null);
     setSelectedClientId("");
+    setContractClientId("");
   };
   const openComposer = (clientId?: string) => {
     setComposerClientId(clientId);
+    setEditingInvoice(null);
+    setPrefillItem(undefined);
     setComposer(true);
   };
+  const openEditInvoice = (invoice: Invoice) => {
+    setEditingInvoice(invoice);
+    setPrefillItem(undefined);
+    setComposer(true);
+  };
+  const openGenerateInvoice = (
+    clientId: string,
+    link: ClientProductLink,
+    product: Product,
+  ) => {
+    const today = new Date();
+    const due = new Date(today.getFullYear(), today.getMonth(), link.paymentDay);
+    if (due < today) due.setMonth(due.getMonth() + 1);
+    const issue = new Date(due);
+    issue.setDate(issue.getDate() - 14);
+    setPrefillItem({
+      productId: product.id,
+      description: product.description,
+      quantity: 1,
+      rate: link.amount,
+      issueDate: issue.toISOString().slice(0, 10),
+      dueDate: due.toISOString().slice(0, 10),
+    });
+    setEditingInvoice(null);
+    setComposerClientId(clientId);
+    setComposer(true);
+  };
+  const handleDeleteInvoice = async (invoice: Invoice) => {
+    try {
+      await deleteInvoice(invoice.id);
+      toast.success(`${invoice.invoiceNumber} deleted`);
+      setSelected(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not delete invoice");
+    }
+  };
+  const materializedRef = useRef(false);
+  useEffect(() => {
+    materializedRef.current = false;
+  }, [activeBusinessId]);
+  useEffect(() => {
+    if (invoicesLoading || materializedRef.current || !invoices.length)
+      return;
+    materializedRef.current = true;
+    materializeDueRecurringInvoices(invoices).catch(() => {
+      materializedRef.current = false;
+    });
+  }, [invoicesLoading, invoices, activeBusinessId]);
   return (
     <div className="min-h-screen bg-[var(--background)] lg:pl-[248px]">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] flex-col border-r border-[var(--border)] bg-[var(--dark)] p-5 text-white lg:flex">
@@ -218,15 +297,23 @@ export function Workspace() {
             <span className="hidden md:inline-flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] shadow-xs">
               <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
               {targetCurrency}
-              <span className="text-[10px] text-[var(--muted)] font-normal">rates active</span>
+              <span className="text-[10px] text-[var(--muted)] font-normal">
+                rates active
+              </span>
             </span>
-            <Select value={activeBusinessId} onValueChange={setActiveBusinessId}>
+            <Select
+              value={activeBusinessId}
+              onValueChange={setActiveBusinessId}
+            >
               <SelectTrigger
                 aria-label="Switch business"
                 className="h-10 w-auto min-w-[200px] md:min-w-[240px] max-w-[340px] px-3 font-semibold gap-2.5 shadow-xs"
               >
                 <div className="flex items-center gap-2 truncate text-sm font-semibold">
-                  <Building2 size={16} className="shrink-0 text-[var(--muted)]" />
+                  <Building2
+                    size={16}
+                    className="shrink-0 text-[var(--muted)]"
+                  />
                   <span className="truncate">
                     {isAllBusinesses
                       ? "All businesses"
@@ -291,6 +378,8 @@ export function Workspace() {
                 )}
                 targetCurrency={targetCurrency}
                 onBack={() => setSelected(null)}
+                onEdit={() => openEditInvoice(selected)}
+                onDelete={() => handleDeleteInvoice(selected)}
               />
             ) : (
               <InvoicesView
@@ -315,14 +404,25 @@ export function Workspace() {
                   (transaction) => transaction.clientId === selectedClient.id,
                 )}
                 businesses={businesses}
+                products={products}
+                clientProducts={clientProducts.filter(
+                  (link) => link.clientId === selectedClient.id,
+                )}
                 targetCurrency={targetCurrency}
                 onBack={() => setSelectedClientId("")}
                 onNewInvoice={() => openComposer(selectedClient.id)}
+                onContracts={() => {
+                  setContractClientId(selectedClient.id);
+                  setView("contracts");
+                }}
                 onSelectInvoice={(invoice) => {
                   setView("invoices");
                   setSelectedClientId("");
                   setSelected(invoice);
                 }}
+                onGenerateInvoice={(link, product) =>
+                  openGenerateInvoice(selectedClient.id, link, product)
+                }
               />
             ) : (
               <ClientsView
@@ -335,6 +435,24 @@ export function Workspace() {
                 onSelect={setSelectedClientId}
               />
             ))}{" "}
+          {view === "contracts" && (
+            <ContractsView
+              products={products}
+              key={activeBusinessId}
+              clients={clients.filter(
+                (client) =>
+                  isAllBusinesses || client.businessId === activeBusinessId,
+              )}
+              businesses={
+                isAllBusinesses
+                  ? businesses
+                  : businesses.filter(
+                      (business) => business.id === activeBusinessId,
+                    )
+              }
+              initialClientId={contractClientId}
+            />
+          )}
           {view === "products" && (
             <ProductsView
               products={products}
@@ -363,7 +481,7 @@ export function Workspace() {
       </main>
       <nav className="fixed inset-x-0 bottom-0 z-40 flex h-[72px] items-center justify-around border-t border-[var(--border)] bg-white/95 px-2 backdrop-blur lg:hidden">
         {nav
-          .filter((item) => item.id !== "settings")
+          .filter((item) => item.id !== "settings" && item.id !== "products")
           .map((n) => (
             <button
               key={n.id}
@@ -379,11 +497,17 @@ export function Workspace() {
         open={composer}
         onOpenChange={(value) => {
           setComposer(value);
-          if (!value) setComposerClientId(undefined);
+          if (!value) {
+            setComposerClientId(undefined);
+            setEditingInvoice(null);
+            setPrefillItem(undefined);
+          }
         }}
         clients={clients}
         products={products}
         initialClientId={composerClientId}
+        invoice={editingInvoice || undefined}
+        prefillItem={prefillItem}
       />
     </div>
   );
@@ -450,7 +574,8 @@ function Dashboard({
     <div className="space-y-6 animate-rise">
       <div>
         <p className="text-sm text-[var(--muted)]">
-          A live view of billing across this business. Reflected in {targetCurrency}.
+          A live view of billing across this business. Reflected in{" "}
+          {targetCurrency}.
         </p>
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -578,9 +703,21 @@ function InvoicesView({
 }) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<string>("All");
+  const upcomingCutoff = new Date();
+  upcomingCutoff.setDate(upcomingCutoff.getDate() + 30);
+  const matchesStatus = (i: Invoice) => {
+    if (status === "All") return true;
+    if (status === "Upcoming")
+      return (
+        i.status !== "Paid" &&
+        (!i.dueDate?.toMillis ||
+          i.dueDate.toMillis() <= upcomingCutoff.getTime())
+      );
+    return i.status === status;
+  };
   const rows = invoices.filter(
     (i) =>
-      (status === "All" || i.status === status) &&
+      matchesStatus(i) &&
       (i.invoiceNumber.toLowerCase().includes(search.toLowerCase()) ||
         clients
           .find((c) => c.id === i.clientId)
@@ -608,11 +745,13 @@ function InvoicesView({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {["All", "Draft", "Sent", "Partial", "Paid"].map((s) => (
-              <SelectItem value={s} key={s}>
-                {s}
-              </SelectItem>
-            ))}
+            {["All", "Upcoming", "Draft", "Sent", "Partial", "Paid"].map(
+              (s) => (
+                <SelectItem value={s} key={s}>
+                  {s}
+                </SelectItem>
+              ),
+            )}
           </SelectContent>
         </Select>
       </div>
@@ -668,9 +807,18 @@ function InvoiceRows({
       {invoices.map((i) => {
         const invoiceCurrency = currencyForBusiness(i.businessId, businesses);
         const displayCurrency = targetCurrency || invoiceCurrency;
-        const convertedTotal = convert(i.totalAmount, invoiceCurrency, displayCurrency);
-        const convertedBalance = convert(i.balanceDue, invoiceCurrency, displayCurrency);
-        const isDifferent = invoiceCurrency.toUpperCase() !== displayCurrency.toUpperCase();
+        const convertedTotal = convert(
+          i.totalAmount,
+          invoiceCurrency,
+          displayCurrency,
+        );
+        const convertedBalance = convert(
+          i.balanceDue,
+          invoiceCurrency,
+          displayCurrency,
+        );
+        const isDifferent =
+          invoiceCurrency.toUpperCase() !== displayCurrency.toUpperCase();
 
         return (
           <button
@@ -688,7 +836,8 @@ function InvoiceRows({
               </p>
             </div>
             <p className="hidden text-sm md:block">
-              {clients.find((c) => c.id === i.clientId)?.name || "Deleted client"}
+              {clients.find((c) => c.id === i.clientId)?.name ||
+                "Deleted client"}
             </p>
             <Status value={i.status} />
             <div className="text-right">
@@ -794,7 +943,8 @@ function ClientsView({
                       {c.email || c.phone || "No contact details"}
                     </p>
                     <p className="mt-4 text-sm font-semibold">
-                      {formatCurrency(totalOutstanding, targetCurrency)} outstanding
+                      {formatCurrency(totalOutstanding, targetCurrency)}{" "}
+                      outstanding
                     </p>
                   </CardContent>
                 </Card>
@@ -822,19 +972,27 @@ function ClientDetail({
   invoices,
   transactions,
   businesses,
+  products,
+  clientProducts,
   targetCurrency,
   onBack,
   onNewInvoice,
+  onContracts,
   onSelectInvoice,
+  onGenerateInvoice,
 }: {
   client: Client;
   invoices: Invoice[];
   transactions: PaymentTransaction[];
   businesses: Business[];
+  products: Product[];
+  clientProducts: ClientProductLink[];
   targetCurrency: string;
   onBack: () => void;
   onNewInvoice: () => void;
+  onContracts: () => void;
   onSelectInvoice: (invoice: Invoice) => void;
+  onGenerateInvoice: (link: ClientProductLink, product: Product) => void;
 }) {
   const { convert } = useCurrencyExchange();
   const business = businesses.find((row) => row.id === client.businessId);
@@ -887,6 +1045,10 @@ function ClientDetail({
           </Button>
         )}
         <EditClientDialog client={client} />
+        <Button variant="outline" onClick={onContracts}>
+          <FilePlus2 size={17} />
+          Contracts
+        </Button>
         <Button onClick={onNewInvoice}>
           <FilePlus2 size={17} />
           New invoice
@@ -911,7 +1073,17 @@ function ClientDetail({
         />
       </div>
 
+      
+
       <div className="grid gap-5 xl:grid-cols-[1.2fr_.8fr]">
+        <ClientProductsCard
+        businessId={client.businessId}
+        clientId={client.id}
+        products={products}
+        links={clientProducts}
+        currency={displayCurrency}
+        onGenerateInvoice={onGenerateInvoice}
+      />
         <Card>
           <CardHeader>
             <h3 className="font-semibold">Invoices</h3>
@@ -978,7 +1150,8 @@ function ClientDetail({
                           {formatCurrency(convertedAmount, displayCurrency)}
                           {isDifferent && (
                             <span className="ml-1.5 text-xs font-normal text-[var(--muted)]">
-                              (orig: {formatCurrency(transaction.amount, txnCur)})
+                              (orig:{" "}
+                              {formatCurrency(transaction.amount, txnCur)})
                             </span>
                           )}
                         </p>
@@ -1023,9 +1196,7 @@ function ClientDetail({
             )}
           </CardContent>
         </Card>
-      </div>
-
-      <Card>
+        <Card>
         <CardHeader>
           <h3 className="font-semibold">Client information</h3>
         </CardHeader>
@@ -1039,6 +1210,9 @@ function ClientDetail({
           />
         </CardContent>
       </Card>
+      </div>
+
+      
     </div>
   );
 }
@@ -1088,11 +1262,14 @@ function ProductsView({
                   <p className="font-semibold">{p.name}</p>
                   <p className="text-sm text-[var(--muted)]">{p.description}</p>
                 </div>
-                <p className="font-semibold">
+                <p className="font-semibold flex items-center gap-2">
                   {formatCurrency(
                     p.rate,
                     currencyForBusiness(p.businessId, businesses),
                   )}
+                  <span className="mt- block">
+                    <ProductDialog product={p} />
+                  </span>
                 </p>
               </div>
             ))}

@@ -3,7 +3,13 @@ import { useEffect, useState } from "react";
 import { listenByBusiness } from "@/lib/data";
 import { useBusiness } from "@/contexts/business-context";
 export function useBusinessCollection<T extends { id: string }>(
-  name: "clients" | "products" | "invoices" | "transactions",
+  name:
+    | "clients"
+    | "products"
+    | "invoices"
+    | "transactions"
+    | "contracts"
+    | "clientProducts",
 ) {
   const { activeBusinessId, businesses } = useBusiness();
   const [data, setData] = useState<T[]>([]);

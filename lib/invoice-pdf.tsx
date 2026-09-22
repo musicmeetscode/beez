@@ -10,6 +10,7 @@ import {
 import { format } from "date-fns";
 import type { Business, Client, Invoice, PaymentTransaction } from "./types";
 import { formatCurrency } from "./currency";
+import { PdfStamp as Stamp } from "./pdf-stamp";
 const s = StyleSheet.create({
   page: { padding: 42, fontFamily: "Helvetica", fontSize: 9, color: "#20251f" },
   header: {
@@ -66,39 +67,6 @@ const s = StyleSheet.create({
     paddingTop: 10,
     color: "#768079",
   },
-  stamp: {
-    position: "absolute",
-    top: 330,
-    left: 177,
-    width: 242,
-    height: 94,
-    border: "4 solid #5d7830",
-    borderRadius: 47,
-    padding: 7,
-    opacity: 0.12,
-    transform: "rotate(-16deg)",
-    zIndex: 0,
-  },
-  stampInner: {
-    height: "100%",
-    border: "2 solid #5d7830",
-    borderRadius: 38,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  stampTitle: {
-    color: "#35471e",
-    fontSize: 21,
-    fontWeight: 700,
-    letterSpacing: 3,
-  },
-  stampDetail: {
-    color: "#35471e",
-    fontSize: 8,
-    fontWeight: 700,
-    letterSpacing: 2,
-    marginTop: 4,
-  },
   receiptAmount: {
     marginTop: 32,
     padding: 24,
@@ -114,16 +82,6 @@ const s = StyleSheet.create({
   receiptAmountValue: { fontSize: 28, fontWeight: 700, marginTop: 8 },
 });
 
-function Stamp({ label }: { label: string }) {
-  return (
-    <View fixed style={s.stamp}>
-      <View style={s.stampInner}>
-        <Text style={s.stampTitle}>OFFICIAL</Text>
-        <Text style={s.stampDetail}>{label.toUpperCase()}</Text>
-      </View>
-    </View>
-  );
-}
 export function InvoiceDocument({
   invoice,
   business,

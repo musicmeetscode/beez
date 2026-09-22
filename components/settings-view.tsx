@@ -12,6 +12,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Card, CardContent, CardHeader } from "./ui/card";
 import { CurrencySelect } from "./currency-select";
+import { defaultPaymentTerms } from "@/lib/contracts";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +23,9 @@ import {
 const schema = z.object({
   name: z.string().min(2),
   paymentInstructions: z.string(),
+  contractPaymentTerms: z.string().trim().min(1).max(12000),
+  contractAddress: z.string().max(500),
+  contractTerms: z.string().max(12000),
   currency: z.string().length(3),
 });
 type Form = z.infer<typeof schema>;
@@ -40,6 +44,10 @@ export function SettingsView() {
       reset({
         name: activeBusiness.name,
         paymentInstructions: activeBusiness.paymentInstructions,
+        contractPaymentTerms:
+          activeBusiness.contractPaymentTerms || defaultPaymentTerms,
+        contractAddress: activeBusiness.contractAddress || "Uganda",
+        contractTerms: activeBusiness.contractTerms || "",
         currency: activeBusiness.currency || "USD",
       });
   }, [activeBusiness, reset]);
@@ -82,11 +90,46 @@ export function SettingsView() {
               />
             </label>
             <label className="block text-sm font-medium">
+              Principal business address (contracts)
+              <Input
+                className="mt-1.5"
+                maxLength={500}
+                {...register("contractAddress")}
+              />
+            </label>
+            <label className="block text-sm font-medium">
               Payment instructions
               <textarea
                 className="focus-ring mt-1.5 min-h-36 w-full rounded-xl border border-[var(--border)] p-3.5 text-[15px]"
                 {...register("paymentInstructions")}
               />
+            </label>
+            <label className="block text-sm font-medium">
+              Default contract payment terms
+              <textarea
+                required
+                maxLength={12000}
+                className="focus-ring mt-1.5 min-h-36 w-full rounded-xl border border-[var(--border)] p-3.5 text-[15px]"
+                {...register("contractPaymentTerms")}
+              />
+              <span className="mt-1 block text-xs text-[var(--muted)]">
+                Automatically included in new contracts. Existing contracts keep
+                their saved terms.
+              </span>
+            </label>
+            <label className="block text-sm font-medium">
+              Business contract terms (optional)
+              <textarea
+                maxLength={12000}
+                rows={6}
+                className="focus-ring mt-1.5 w-full rounded-xl border border-[var(--border)] p-3.5 text-[15px]"
+                placeholder="Terms that apply to every software contract for this business."
+                {...register("contractTerms")}
+              />
+              <span className="mt-1 block text-xs text-[var(--muted)]">
+                Included automatically alongside payment terms and the selected
+                product&apos;s terms.
+              </span>
             </label>
             <Button disabled={isSubmitting}>Save changes</Button>
           </form>
@@ -156,7 +199,14 @@ function NewBusinessDialog() {
     formState: { isSubmitting },
   } = useForm<Form>({
     resolver: zodResolver(schema),
-    defaultValues: { name: "", paymentInstructions: "", currency: "USD" },
+    defaultValues: {
+      name: "",
+      paymentInstructions: "",
+      contractPaymentTerms: defaultPaymentTerms,
+      contractAddress: "Uganda",
+      contractTerms: "",
+      currency: "USD",
+    },
   });
   return (
     <Card>

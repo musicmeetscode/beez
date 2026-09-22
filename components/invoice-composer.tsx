@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   useFieldArray,
   useForm,
@@ -11,10 +11,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Check, ChevronsUpDown, Plus, Trash2 } from "lucide-react";
 import { Timestamp } from "firebase/firestore";
 import { toast } from "sonner";
-import { createInvoice } from "@/lib/data";
+import { createInvoice, updateInvoice } from "@/lib/data";
 import { formatCurrency } from "@/lib/currency";
 import { useBusiness } from "@/contexts/business-context";
-import type { Client, InvoiceStatus, Product } from "@/lib/types";
+import type { Client, Invoice, InvoiceStatus, Product } from "@/lib/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
@@ -64,19 +64,32 @@ export function InvoiceComposer({
   clients,
   products,
   initialClientId,
+  invoice,
+  prefillItem,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   clients: Client[];
   products: Product[];
   initialClientId?: string;
+  invoice?: Invoice;
+  prefillItem?: {
+    productId: string;
+    description: string;
+    quantity: number;
+    rate: number;
+    issueDate?: string;
+    dueDate?: string;
+  };
 }) {
   const { activeBusinessId, activeBusiness, businesses } = useBusiness();
   const [selectedBusinessId, setSelectedBusinessId] = useState("");
   const targetBusinessId =
-    activeBusinessId === "all"
+    invoice?.businessId ||
+    (activeBusinessId === "all"
       ? selectedBusinessId || businesses[0]?.id || ""
-      : activeBusinessId;
+      : activeBusinessId);
+  const lockStatus = Boolean(invoice) && invoice!.amountPaid > 0;
   const targetBusiness =
     businesses.find((business) => business.id === targetBusinessId) ||
     activeBusiness;
@@ -132,7 +145,7 @@ export function InvoiceComposer({
     if (!open) setSearch("");
   }, [open]);
   useEffect(() => {
-    if (!open) return;
+    if (!open || invoice) return;
     const initialClient = clients.find(
       (client) => client.id === initialClientId,
     );
@@ -149,6 +162,7 @@ export function InvoiceComposer({
     }
   }, [
     open,
+    invoice,
     activeBusinessId,
     initialClientId,
     clients,
@@ -156,6 +170,49 @@ export function InvoiceComposer({
     businesses,
     setValue,
   ]);
+  useEffect(() => {
+    if (!open || !invoice) return;
+    reset({
+      clientId: invoice.clientId,
+      issueDate: invoice.issueDate.toDate().toISOString().slice(0, 10),
+      dueDate: invoice.dueDate.toDate().toISOString().slice(0, 10),
+      taxRate: invoice.taxRate,
+      isRecurring: invoice.isRecurring,
+      recurringInterval: invoice.recurringInterval,
+      items: invoice.items.map((item) => ({
+        productId: item.productId || "",
+        description: item.description,
+        quantity: item.quantity,
+        rate: item.rate,
+      })),
+    });
+    setTone(invoice.status === "Draft" ? "Draft" : "Sent");
+  }, [open, invoice, reset]);
+  const appliedPrefillRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      appliedPrefillRef.current = false;
+      return;
+    }
+    if (invoice || !prefillItem || appliedPrefillRef.current) return;
+    appliedPrefillRef.current = true;
+    setValue(
+      "items",
+      [
+        {
+          productId: prefillItem.productId,
+          description: prefillItem.description,
+          quantity: prefillItem.quantity,
+          rate: prefillItem.rate,
+        },
+      ],
+      { shouldValidate: true },
+    );
+    if (prefillItem.issueDate)
+      setValue("issueDate", prefillItem.issueDate, { shouldValidate: true });
+    if (prefillItem.dueDate)
+      setValue("dueDate", prefillItem.dueDate, { shouldValidate: true });
+  }, [open, invoice, prefillItem, setValue]);
   const save = handleSubmit(async (v) => {
     try {
       if (!targetBusinessId) throw new Error("Choose a business");
@@ -171,22 +228,42 @@ export function InvoiceComposer({
       );
       const taxRate = Number(v.taxRate) || 0;
       const calculatedTotal = calculatedSubtotal * (1 + taxRate / 100);
-      await createInvoice(targetBusinessId, {
-        clientId: v.clientId,
-        invoiceNumber,
-        status: tone,
-        items,
-        subtotal: calculatedSubtotal,
-        taxRate,
-        totalAmount: calculatedTotal,
-        amountPaid: 0,
-        balanceDue: calculatedTotal,
-        issueDate: Timestamp.fromDate(new Date(`${v.issueDate}T12:00:00`)),
-        dueDate: Timestamp.fromDate(new Date(`${v.dueDate}T12:00:00`)),
-        isRecurring: v.isRecurring,
-        recurringInterval: v.isRecurring ? v.recurringInterval : null,
-      });
-      toast.success(`${invoiceNumber} created`);
+      if (invoice) {
+        const status = lockStatus ? invoice.status : tone;
+        const balanceDue =
+          status === "Paid" ? 0 : Math.max(0, calculatedTotal - invoice.amountPaid);
+        await updateInvoice(invoice.id, {
+          clientId: v.clientId,
+          items,
+          subtotal: calculatedSubtotal,
+          taxRate,
+          totalAmount: calculatedTotal,
+          balanceDue,
+          status,
+          issueDate: Timestamp.fromDate(new Date(`${v.issueDate}T12:00:00`)),
+          dueDate: Timestamp.fromDate(new Date(`${v.dueDate}T12:00:00`)),
+          isRecurring: v.isRecurring,
+          recurringInterval: v.isRecurring ? v.recurringInterval : null,
+        });
+        toast.success(`${invoice.invoiceNumber} updated`);
+      } else {
+        await createInvoice(targetBusinessId, {
+          clientId: v.clientId,
+          invoiceNumber,
+          status: tone,
+          items,
+          subtotal: calculatedSubtotal,
+          taxRate,
+          totalAmount: calculatedTotal,
+          amountPaid: 0,
+          balanceDue: calculatedTotal,
+          issueDate: Timestamp.fromDate(new Date(`${v.issueDate}T12:00:00`)),
+          dueDate: Timestamp.fromDate(new Date(`${v.dueDate}T12:00:00`)),
+          isRecurring: v.isRecurring,
+          recurringInterval: v.isRecurring ? v.recurringInterval : null,
+        });
+        toast.success(`${invoiceNumber} created`);
+      }
       reset();
       onOpenChange(false);
     } catch (e) {
@@ -197,9 +274,13 @@ export function InvoiceComposer({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl p-0">
         <div className="border-b border-[var(--border)] p-6 pr-14">
-          <DialogTitle>New invoice</DialogTitle>
+          <DialogTitle>
+            {invoice ? `Edit ${invoice.invoiceNumber}` : "New invoice"}
+          </DialogTitle>
           <DialogDescription>
-            Create and send a precise invoice for {targetBusiness?.name}.
+            {invoice
+              ? "Update the details for this invoice."
+              : `Create and send a precise invoice for ${targetBusiness?.name}.`}
           </DialogDescription>
         </div>
         <form onSubmit={save}>
@@ -529,21 +610,29 @@ export function InvoiceComposer({
             >
               Cancel
             </Button>
-            <Button
-              type="submit"
-              variant="outline"
-              disabled={isSubmitting}
-              onClick={() => setTone("Draft")}
-            >
-              Save draft
-            </Button>
-            <Button
-              type="submit"
-              disabled={isSubmitting}
-              onClick={() => setTone("Sent")}
-            >
-              Create invoice
-            </Button>
+            {lockStatus ? (
+              <Button type="submit" disabled={isSubmitting}>
+                Save changes
+              </Button>
+            ) : (
+              <>
+                <Button
+                  type="submit"
+                  variant="outline"
+                  disabled={isSubmitting}
+                  onClick={() => setTone("Draft")}
+                >
+                  Save draft
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={isSubmitting}
+                  onClick={() => setTone("Sent")}
+                >
+                  {invoice ? "Save & send" : "Create invoice"}
+                </Button>
+              </>
+            )}
           </div>
         </form>
       </DialogContent>

@@ -4,8 +4,14 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, type Resolver } from "react-hook-form";
 import { toast } from "sonner";
-import { createClient, createProduct, updateClient } from "@/lib/data";
-import type { Client } from "@/lib/types";
+import {
+  createClient,
+  createProduct,
+  updateClient,
+  updateProduct,
+} from "@/lib/data";
+import type { Client, Product } from "@/lib/types";
+import { productContractTerms } from "@/lib/contracts";
 import { useBusiness } from "@/contexts/business-context";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -237,17 +243,21 @@ const productSchema = z.object({
   name: z.string().min(2),
   description: z.string().min(2),
   rate: z.coerce.number().min(0),
+  termsOfUse: z.string().trim().min(1).max(12000),
 });
 type ProductForm = z.infer<typeof productSchema>;
 export function ProductDialog({
   trigger,
   businessId,
+  product,
 }: {
   trigger?: React.ReactNode;
   businessId?: string;
+  product?: Product;
 }) {
   const { activeBusinessId } = useBusiness();
-  const targetBusinessId = businessId || activeBusinessId;
+  const targetBusinessId =
+    product?.businessId || businessId || activeBusinessId;
   const [open, setOpen] = useState(false);
   const {
     register,
@@ -256,15 +266,24 @@ export function ProductDialog({
     formState: { errors, isSubmitting },
   } = useForm<ProductForm>({
     resolver: zodResolver(productSchema) as Resolver<ProductForm>,
-    defaultValues: { name: "", description: "", rate: 0 },
+    defaultValues: {
+      name: product?.name || "",
+      description: product?.description || "",
+      rate: product?.rate || 0,
+      termsOfUse: productContractTerms(product?.termsOfUse),
+    },
   });
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        {trigger || <Button>New product</Button>}
+        {trigger || (
+          <Button variant={product ? "outline" : "default"}>
+            {product ? "Edit" : "New product"}
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent>
-        <DialogTitle>Add a product</DialogTitle>
+        <DialogTitle>{product ? "Edit product" : "Add a product"}</DialogTitle>
         <DialogDescription>
           Products keep descriptions and rates consistent across invoices.
         </DialogDescription>
@@ -272,9 +291,10 @@ export function ProductDialog({
           className="mt-6 grid gap-4"
           onSubmit={handleSubmit(async (v) => {
             try {
-              await createProduct(targetBusinessId, v);
-              toast.success("Product added");
-              reset();
+              if (product) await updateProduct(product.id, v);
+              else await createProduct(targetBusinessId, v);
+              toast.success(product ? "Product updated" : "Product added");
+              reset(product ? v : undefined);
               setOpen(false);
             } catch (e) {
               toast.error(
@@ -294,6 +314,21 @@ export function ProductDialog({
           </Field>
           <Field label="Default rate" error={errors.rate?.message}>
             <Input type="number" step="0.01" {...register("rate")} />
+          </Field>
+          <Field
+            label="Software terms of use"
+            error={errors.termsOfUse?.message}
+          >
+            <textarea
+              maxLength={12000}
+              rows={7}
+              className="focus-ring w-full rounded-xl border border-[var(--border)] p-3 text-sm"
+              {...register("termsOfUse")}
+            />
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              Used automatically for this product&apos;s new contracts. Existing
+              contracts keep their saved terms.
+            </p>
           </Field>
           <Button
             className="mt-2"

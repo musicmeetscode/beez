@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { format } from "date-fns";
-import { ArrowLeft, Download, Receipt } from "lucide-react";
+import { ArrowLeft, Download, Pencil, Receipt, Trash2 } from "lucide-react";
 import { useForm, type Resolver } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -47,6 +47,8 @@ export function InvoiceDetail({
   transactions,
   targetCurrency,
   onBack,
+  onEdit,
+  onDelete,
 }: {
   invoice: Invoice;
   business?: Business;
@@ -54,6 +56,8 @@ export function InvoiceDetail({
   transactions: PaymentTransaction[];
   targetCurrency?: string;
   onBack: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
 }) {
   const { convert } = useCurrencyExchange();
   const currency = business?.currency || "USD";
@@ -108,6 +112,26 @@ export function InvoiceDetail({
             Download PDF
           </Button>
         )}
+        <Button variant="outline" onClick={onEdit}>
+          <Pencil size={17} />
+          Edit
+        </Button>
+        <Button
+          variant="outline"
+          className="text-red-600 hover:bg-red-50 hover:text-red-700"
+          onClick={() => {
+            if (
+              confirm(
+                `Delete invoice ${invoice.invoiceNumber}? This cannot be undone.`,
+              )
+            ) {
+              onDelete();
+            }
+          }}
+        >
+          <Trash2 size={17} />
+          Delete
+        </Button>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
             <Button disabled={invoice.balanceDue <= 0}>

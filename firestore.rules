@@ -14,6 +14,46 @@ service cloud.firestore {
     }
     match /clients/{id} { allow read, delete: if ownsBusiness(resource.data.businessId); allow create: if ownsBusiness(request.resource.data.businessId); allow update: if ownsBusiness(resource.data.businessId) && request.resource.data.businessId == resource.data.businessId; }
     match /products/{id} { allow read, delete: if ownsBusiness(resource.data.businessId); allow create: if ownsBusiness(request.resource.data.businessId); allow update: if ownsBusiness(resource.data.businessId) && request.resource.data.businessId == resource.data.businessId; }
+    match /clientProducts/{id} { allow read, delete: if ownsBusiness(resource.data.businessId); allow create: if ownsBusiness(request.resource.data.businessId); allow update: if ownsBusiness(resource.data.businessId) && request.resource.data.businessId == resource.data.businessId; }
+    // Explicit edits preserve contract identity. Extensions remain separate documents.
+    match /contracts/{id} {
+      function shortText(value) { return value is string && value.size() <= 500; }
+      function terms(value) { return value is string && value.size() > 0 && value.size() <= 12000; }
+      function validContract(d) {
+        return d.keys().hasOnly(['id', 'businessId', 'clientId', 'clientName', 'clientEmail', 'clientAddress', 'contractorName', 'contractorAddress', 'agreementTerms', 'businessTerms', 'productName', 'currency', 'amount', 'billingInterval', 'customBillingFrequency', 'startDate', 'endDate', 'subscriptionDetails', 'paymentTerms', 'renewalTerms', 'termsOfUse', 'additionalTerms', 'extendsContractId', 'createdAt'])
+          && d.id == id && shortText(d.businessId) && shortText(d.clientId)
+          && shortText(d.clientName) && d.clientName.size() > 0
+          && shortText(d.clientEmail) && shortText(d.clientAddress)
+          && shortText(d.contractorName) && d.contractorName.size() > 0
+          && (!('contractorAddress' in d) || shortText(d.contractorAddress))
+          && (!('businessTerms' in d) || (d.businessTerms is string && d.businessTerms.size() <= 12000))
+          && (!('agreementTerms' in d) || (d.agreementTerms is string && d.agreementTerms.size() > 0 && d.agreementTerms.size() <= 24000))
+          && shortText(d.productName) && d.productName.size() > 0
+          && d.currency is string && d.currency.matches('^[A-Z]{3}$')
+          && d.amount is number && d.amount >= 0 && d.amount <= 1000000000000
+          && d.billingInterval in ['monthly', 'quarterly', 'yearly', 'custom']
+          && shortText(d.customBillingFrequency) && (d.billingInterval != 'custom' || d.customBillingFrequency.size() > 0)
+          && d.startDate is string && d.startDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && d.endDate is string && d.endDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && d.endDate >= d.startDate
+          && terms(d.subscriptionDetails) && terms(d.paymentTerms) && terms(d.renewalTerms) && terms(d.termsOfUse)
+          && d.additionalTerms is string && d.additionalTerms.size() <= 12000
+          && shortText(d.extendsContractId)
+          && d.createdAt is timestamp
+          && get(/databases/$(database)/documents/clients/$(d.clientId)).data.businessId == d.businessId
+          && (d.extendsContractId == '' || (
+            get(/databases/$(database)/documents/contracts/$(d.extendsContractId)).data.businessId == d.businessId
+            && get(/databases/$(database)/documents/contracts/$(d.extendsContractId)).data.clientId == d.clientId
+            && d.startDate > get(/databases/$(database)/documents/contracts/$(d.extendsContractId)).data.endDate));
+      }
+      allow read: if ownsBusiness(resource.data.businessId);
+      allow create: if ownsBusiness(request.resource.data.businessId) && request.resource.data.createdAt == request.time && validContract(request.resource.data);
+      allow update: if ownsBusiness(resource.data.businessId)
+        && request.resource.data.businessId == resource.data.businessId
+        && request.resource.data.clientId == resource.data.clientId
+        && request.resource.data.extendsContractId == resource.data.extendsContractId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && validContract(request.resource.data);
+    }
     match /invoices/{id} { allow read, delete: if ownsBusiness(resource.data.businessId); allow create: if ownsBusiness(request.resource.data.businessId); allow update: if ownsBusiness(resource.data.businessId) && request.resource.data.businessId == resource.data.businessId; }
     match /transactions/{id} { allow read, delete: if ownsBusiness(resource.data.businessId); allow create: if ownsBusiness(request.resource.data.businessId); allow update: if ownsBusiness(resource.data.businessId) && request.resource.data.businessId == resource.data.businessId; }
     match /expenses/{id} {

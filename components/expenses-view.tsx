@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { format } from "date-fns";
 import {
   CalendarDays,
+  Pencil,
   Plus,
   Repeat2,
   TrendingDown,
@@ -24,6 +25,7 @@ import {
   createRecurringExpenseSeries,
   deleteExpense,
   generateMissingRecurringRecords,
+  updateExpense,
 } from "@/lib/data";
 import { expenseAmountInMonth, nextOccurrence } from "@/lib/expenses";
 import { formatCurrency } from "@/lib/currency";
@@ -81,6 +83,7 @@ export function ExpensesView({
   const { convert } = useCurrencyExchange();
   const [migrating, setMigrating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<"All" | "Upcoming">("All");
 
   const targetCurrency =
     propTargetCurrency ||
@@ -99,6 +102,12 @@ export function ExpensesView({
       (e) => e.isRecurring && !e.recurringGroupId && Boolean(e.recurringInterval),
     );
   }, [expenses]);
+
+  const visibleExpenses = useMemo(() => {
+    if (filter === "All") return expenses;
+    const now = new Date();
+    return expenses.filter((e) => e.startsOn.toDate() >= now);
+  }, [expenses, filter]);
 
   const handleGenerateAllRecords = async () => {
     if (!user || migrating) return;
@@ -160,6 +169,18 @@ export function ExpensesView({
             revenue.
           </p>
         </div>
+        <Select
+          value={filter}
+          onValueChange={(v) => setFilter(v as "All" | "Upcoming")}
+        >
+          <SelectTrigger className="sm:w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="All">All</SelectItem>
+            <SelectItem value="Upcoming">Upcoming</SelectItem>
+          </SelectContent>
+        </Select>
         <ExpenseDialog targetCurrency={targetCurrency} />
       </div>
 
@@ -210,9 +231,9 @@ export function ExpensesView({
         </CardContent>
       </Card>
 
-      {expenses.length ? (
+      {visibleExpenses.length ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {expenses.map((expense) => {
+          {visibleExpenses.map((expense) => {
             const convertedAmount = convert(
               expense.amount,
               expense.currency,
@@ -293,6 +314,20 @@ export function ExpensesView({
                         </p>
 
                         <div className="flex items-center gap-1">
+                          <ExpenseDialog
+                            targetCurrency={targetCurrency}
+                            expense={expense}
+                            trigger={
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-7 text-[var(--muted)] hover:bg-[var(--surface-2)]"
+                                aria-label="Edit this expense"
+                              >
+                                <Pencil size={14} />
+                              </Button>
+                            }
+                          />
                           {expense.recurringGroupId && (
                             <Button
                               variant="ghost"
@@ -337,16 +372,32 @@ export function ExpensesView({
         </div>
       ) : (
         <EmptyState
-          title="No expenses yet"
-          detail="Add one-time or recurring costs to see true net revenue."
-          action={<ExpenseDialog targetCurrency={targetCurrency} />}
+          title={filter === "Upcoming" ? "Nothing upcoming" : "No expenses yet"}
+          detail={
+            filter === "Upcoming"
+              ? "No expenses are dated in the future."
+              : "Add one-time or recurring costs to see true net revenue."
+          }
+          action={
+            filter === "All" ? (
+              <ExpenseDialog targetCurrency={targetCurrency} />
+            ) : undefined
+          }
         />
       )}
     </div>
   );
 }
 
-function ExpenseDialog({ targetCurrency }: { targetCurrency?: string }) {
+function ExpenseDialog({
+  targetCurrency,
+  expense,
+  trigger,
+}: {
+  targetCurrency?: string;
+  expense?: Expense;
+  trigger?: React.ReactNode;
+}) {
   const { user } = useAuth();
   const { businesses } = useBusiness();
   const [open, setOpen] = useState(false);
@@ -361,7 +412,7 @@ function ExpenseDialog({ targetCurrency }: { targetCurrency?: string }) {
     formState: { errors, isSubmitting },
   } = useForm<Form>({
     resolver: zodResolver(schema) as Resolver<Form>,
-    defaultValues: defaults(defaultCurr),
+    defaultValues: expense ? defaultsFromExpense(expense) : defaults(defaultCurr),
   });
 
   const recurring = watch("isRecurring");
@@ -389,18 +440,27 @@ function ExpenseDialog({ targetCurrency }: { targetCurrency?: string }) {
   }, [recurring, recurringInterval, occurrences, startsOn]);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(value) => {
+        setOpen(value);
+        if (value) reset(expense ? defaultsFromExpense(expense) : defaults(defaultCurr));
+      }}
+    >
       <DialogTrigger asChild>
-        <Button>
-          <Plus size={17} />
-          New expense
-        </Button>
+        {trigger || (
+          <Button>
+            <Plus size={17} />
+            New expense
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent>
-        <DialogTitle>Add expense</DialogTitle>
+        <DialogTitle>{expense ? "Edit expense" : "Add expense"}</DialogTitle>
         <DialogDescription>
-          Expenses reflect across your business in {defaultCurr} and reduce
-          dashboard net revenue.
+          {expense
+            ? "Updates this expense record."
+            : `Expenses reflect across your business in ${defaultCurr} and reduce dashboard net revenue.`}
         </DialogDescription>
         <form
           className="mt-6 grid gap-4"
@@ -412,7 +472,16 @@ function ExpenseDialog({ targetCurrency }: { targetCurrency?: string }) {
                 new Date(`${values.startsOn}T12:00:00`),
               );
 
-              if (values.isRecurring && values.recurringInterval) {
+              if (expense) {
+                await updateExpense(expense.id, {
+                  name: values.name,
+                  category: values.category,
+                  amount,
+                  currency: values.currency,
+                  startsOn: startDate,
+                });
+                toast.success("Expense updated");
+              } else if (values.isRecurring && values.recurringInterval) {
                 const count = Number(values.occurrences) || 12;
                 await createRecurringExpenseSeries(
                   user.uid,
@@ -443,13 +512,15 @@ function ExpenseDialog({ targetCurrency }: { targetCurrency?: string }) {
                 toast.success("Expense added");
               }
 
-              reset(defaults(defaultCurr));
+              reset(expense ? defaultsFromExpense(expense) : defaults(defaultCurr));
               setOpen(false);
             } catch (error) {
               toast.error(
                 error instanceof Error
                   ? error.message
-                  : "Could not add expense",
+                  : expense
+                    ? "Could not update expense"
+                    : "Could not add expense",
               );
             }
           })}
@@ -487,6 +558,7 @@ function ExpenseDialog({ targetCurrency }: { targetCurrency?: string }) {
           >
             <Input type="date" {...register("startsOn")} />
           </Field>
+          {!expense && (
           <div className="rounded-2xl border border-[var(--border)] p-4">
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -571,12 +643,15 @@ function ExpenseDialog({ targetCurrency }: { targetCurrency?: string }) {
               </div>
             )}
           </div>
+          )}
           <Button disabled={isSubmitting}>
             {isSubmitting
               ? "Saving…"
-              : recurring
-                ? `Create ${occurrences || 12} expense records`
-                : "Save expense"}
+              : expense
+                ? "Save changes"
+                : recurring
+                  ? `Create ${occurrences || 12} expense records`
+                  : "Save expense"}
           </Button>
         </form>
       </DialogContent>
@@ -591,6 +666,19 @@ function defaults(currency = "USD"): Form {
     amount: 0,
     currency,
     startsOn: new Date().toISOString().slice(0, 10),
+    isRecurring: false,
+    recurringInterval: null,
+    occurrences: 12,
+  };
+}
+
+function defaultsFromExpense(expense: Expense): Form {
+  return {
+    name: expense.name,
+    category: expense.category,
+    amount: expense.amount,
+    currency: expense.currency,
+    startsOn: expense.startsOn.toDate().toISOString().slice(0, 10),
     isRecurring: false,
     recurringInterval: null,
     occurrences: 12,
