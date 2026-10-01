@@ -54,6 +54,25 @@ service cloud.firestore {
         && request.resource.data.createdAt == resource.data.createdAt
         && validContract(request.resource.data);
     }
+    // Balance API keys. The document ID is the secret key: anyone holding it can
+    // read that one document, but the collection can never be listed publicly.
+    match /apiKeys/{key} {
+      function validApiKey(d) {
+        return d.keys().hasOnly(['businessId', 'clientId', 'productId', 'clientProductId', 'clientName', 'productName', 'currency', 'balance', 'productBalance', 'openInvoices', 'createdAt', 'updatedAt'])
+          && d.businessId is string && d.clientId is string && d.productId is string
+          && d.clientName is string && d.productName is string && d.currency is string
+          && d.balance is number && d.productBalance is number && d.openInvoices is int
+          && get(/databases/$(database)/documents/clients/$(d.clientId)).data.businessId == d.businessId;
+      }
+      allow get: if true;
+      allow list, delete: if ownsBusiness(resource.data.businessId);
+      allow create: if key.matches('^bz_[a-f0-9]{48}$') && ownsBusiness(request.resource.data.businessId) && validApiKey(request.resource.data);
+      allow update: if ownsBusiness(resource.data.businessId)
+        && request.resource.data.businessId == resource.data.businessId
+        && request.resource.data.clientId == resource.data.clientId
+        && request.resource.data.productId == resource.data.productId
+        && validApiKey(request.resource.data);
+    }
     match /invoices/{id} { allow read, delete: if ownsBusiness(resource.data.businessId); allow create: if ownsBusiness(request.resource.data.businessId); allow update: if ownsBusiness(resource.data.businessId) && request.resource.data.businessId == resource.data.businessId; }
     match /transactions/{id} { allow read, delete: if ownsBusiness(resource.data.businessId); allow create: if ownsBusiness(request.resource.data.businessId); allow update: if ownsBusiness(resource.data.businessId) && request.resource.data.businessId == resource.data.businessId; }
     match /expenses/{id} {

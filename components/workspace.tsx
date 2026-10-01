@@ -34,6 +34,7 @@ import { formatCurrency } from "@/lib/currency";
 import type {
   Business,
   Client,
+  ApiKey,
   ClientProductLink,
   Expense,
   Invoice,
@@ -63,6 +64,7 @@ import { downloadReceiptPdf } from "@/lib/invoice-pdf";
 import { deleteInvoice } from "@/lib/data";
 import { materializeDueRecurringInvoices } from "@/lib/invoices";
 import { ClientProductsCard } from "./client-products";
+import { syncApiKeyBalances } from "@/lib/api-keys";
 import { SettingsView } from "./settings-view";
 import { ExpensesView } from "./expenses-view";
 import { FinancialChart } from "./financial-chart";
@@ -112,6 +114,11 @@ export function Workspace() {
   const { data: clientProducts, error: clientProductsError } =
     useBusinessCollection<ClientProductLink>("clientProducts");
   const {
+    data: apiKeys,
+    loading: apiKeysLoading,
+    error: apiKeysError,
+  } = useBusinessCollection<ApiKey>("apiKeys");
+  const {
     data: transactions,
     loading: transactionsLoading,
     error: transactionsError,
@@ -127,6 +134,7 @@ export function Workspace() {
     productsError ||
     invoicesError ||
     clientProductsError ||
+    apiKeysError ||
     transactionsError ||
     expensesError;
   const [view, setView] = useState<View>("dashboard");
@@ -152,6 +160,31 @@ export function Workspace() {
     (client) => client.id === selectedClientId,
   );
   const isAllBusinesses = activeBusinessId === "all";
+  // Keep the balances served to client apps in step with invoice changes.
+  useEffect(() => {
+    if (invoicesLoading || apiKeysLoading || invoicesError || !apiKeys.length)
+      return;
+    syncApiKeyBalances(apiKeys, {
+      invoices,
+      clients,
+      products,
+      businesses,
+    }).catch((e) =>
+      toast.error(
+        `API balances could not be updated: ${e instanceof Error ? e.message : e}`,
+        { id: "api-key-sync" },
+      ),
+    );
+  }, [
+    apiKeys,
+    apiKeysLoading,
+    businesses,
+    clients,
+    invoices,
+    invoicesError,
+    invoicesLoading,
+    products,
+  ]);
   const targetCurrency = isAllBusinesses
     ? businesses[0]?.currency || "USD"
     : activeBusiness?.currency || "USD";
@@ -407,6 +440,9 @@ export function Workspace() {
                 products={products}
                 clientProducts={clientProducts.filter(
                   (link) => link.clientId === selectedClient.id,
+                )}
+                apiKeys={apiKeys.filter(
+                  (key) => key.clientId === selectedClient.id,
                 )}
                 targetCurrency={targetCurrency}
                 onBack={() => setSelectedClientId("")}
@@ -974,6 +1010,7 @@ function ClientDetail({
   businesses,
   products,
   clientProducts,
+  apiKeys,
   targetCurrency,
   onBack,
   onNewInvoice,
@@ -987,6 +1024,7 @@ function ClientDetail({
   businesses: Business[];
   products: Product[];
   clientProducts: ClientProductLink[];
+  apiKeys: ApiKey[];
   targetCurrency: string;
   onBack: () => void;
   onNewInvoice: () => void;
@@ -1077,13 +1115,17 @@ function ClientDetail({
 
       <div className="grid gap-5 xl:grid-cols-[1.2fr_.8fr]">
         <ClientProductsCard
-        businessId={client.businessId}
-        clientId={client.id}
-        products={products}
-        links={clientProducts}
-        currency={displayCurrency}
-        onGenerateInvoice={onGenerateInvoice}
-      />
+          businessId={client.businessId}
+          clientId={client.id}
+          clientName={client.name}
+          products={products}
+          links={clientProducts}
+          apiKeys={apiKeys}
+          invoices={invoices}
+          currency={displayCurrency}
+          businessCurrency={business?.currency || "USD"}
+          onGenerateInvoice={onGenerateInvoice}
+        />
         <Card>
           <CardHeader>
             <h3 className="font-semibold">Invoices</h3>

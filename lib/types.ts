@@ -124,3 +124,18 @@ export interface Expense {
   recurringTotal?: number;
   createdAt: Timestamp;
 }
+export interface ApiKey {
+  id: string;
+  businessId: string;
+  clientId: string;
+  productId: string;
+  clientProductId: string;
+  clientName: string;
+  productName: string;
+  currency: string;
+  balance: number;
+  productBalance: number;
+  openInvoices: number;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}

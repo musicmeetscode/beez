@@ -4,14 +4,30 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, type Resolver } from "react-hook-form";
 import { toast } from "sonner";
-import { FilePlus2, Package, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  Copy,
+  FilePlus2,
+  KeyRound,
+  Package,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import {
   createClientProductLink,
   deleteClientProductLink,
   updateClientProductLink,
 } from "@/lib/data";
+import {
+  apiKeyBalanceUrl,
+  computeBalances,
+  createApiKey,
+  deleteApiKey,
+  resyncApiKey,
+} from "@/lib/api-keys";
 import { formatCurrency } from "@/lib/currency";
-import type { ClientProductLink, Product } from "@/lib/types";
+import type { ApiKey, ClientProductLink, Invoice, Product } from "@/lib/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Card, CardContent, CardHeader } from "./ui/card";
@@ -47,16 +63,24 @@ function ordinalDay(day: number) {
 export function ClientProductsCard({
   businessId,
   clientId,
+  clientName,
   products,
   links,
+  apiKeys,
+  invoices,
   currency,
+  businessCurrency,
   onGenerateInvoice,
 }: {
   businessId: string;
   clientId: string;
+  clientName: string;
   products: Product[];
   links: ClientProductLink[];
+  apiKeys: ApiKey[];
+  invoices: Invoice[];
   currency: string;
+  businessCurrency: string;
   onGenerateInvoice: (link: ClientProductLink, product: Product) => void;
 }) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -128,6 +152,26 @@ export function ClientProductsCard({
                         <FilePlus2 size={15} />
                         Generate invoice
                       </Button>
+                    )}
+                    {product && (
+                      <ApiKeyDialog
+                        invoices={invoices}
+                        apiKey={apiKeys.find(
+                          (key) => key.productId === product.id,
+                        )}
+                        create={() =>
+                          createApiKey({
+                            businessId,
+                            clientId,
+                            productId: product.id,
+                            clientProductId: link.id,
+                            clientName,
+                            productName: product.name,
+                            currency: businessCurrency,
+                            invoices,
+                          })
+                        }
+                      />
                     )}
                     <ClientProductDialog
                       businessId={businessId}
@@ -307,5 +351,209 @@ function ClientProductDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ApiKeyDialog({
+  invoices,
+  apiKey,
+  create,
+}: {
+  invoices: Invoice[];
+  apiKey?: ApiKey;
+  create: () => Promise<string>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const run = async (action: () => Promise<unknown>, message: string) => {
+    try {
+      setBusy(true);
+      await action();
+      toast.success(message);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not update API key");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const copy = async (value: string, label: string) => {
+    await navigator.clipboard.writeText(value);
+    toast.success(`${label} copied`);
+  };
+  const url = apiKey ? apiKeyBalanceUrl(apiKey.id) : "";
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 text-[var(--muted)]"
+          aria-label="API key"
+        >
+          <KeyRound size={14} />
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogTitle>Balance API key</DialogTitle>
+        <DialogDescription>
+          Client apps for this product can read the client&apos;s active
+          balance with this key. Anyone holding the key can read the balance,
+          so keep it out of public code.
+        </DialogDescription>
+        {apiKey ? (
+          <div className="mt-6 grid gap-4">
+            <CopyField
+              label="API key"
+              value={apiKey.id}
+              onCopy={() => copy(apiKey.id, "API key")}
+            />
+            <CopyField
+              label="Endpoint (GET)"
+              value={url}
+              onCopy={() => copy(url, "Endpoint")}
+            />
+            <BalanceCheck
+              apiKey={apiKey}
+              invoices={invoices}
+              busy={busy}
+              onResync={() =>
+                run(() => resyncApiKey(apiKey, invoices), "Balance resynced")
+              }
+            />
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => {
+                  if (!confirm("Regenerate? The current key stops working."))
+                    return;
+                  void run(async () => {
+                    await create();
+                    await deleteApiKey(apiKey.id);
+                  }, "API key regenerated");
+                }}
+              >
+                <RefreshCw size={15} />
+                Regenerate
+              </Button>
+              <Button
+                variant="ghost"
+                className="text-red-600 hover:bg-red-50"
+                disabled={busy}
+                onClick={() => {
+                  if (!confirm("Revoke this API key?")) return;
+                  void run(() => deleteApiKey(apiKey.id), "API key revoked");
+                }}
+              >
+                <Trash2 size={15} />
+                Revoke
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button
+            className="mt-6"
+            disabled={busy}
+            onClick={() => run(create, "API key created")}
+          >
+            <KeyRound size={15} />
+            Generate API key
+          </Button>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CopyField({
+  label,
+  value,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  onCopy: () => void;
+}) {
+  return (
+    <label className="block text-sm font-medium">
+      {label}
+      <div className="mt-1.5 flex gap-2">
+        <Input readOnly value={value} className="font-mono text-xs" />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          aria-label={`Copy ${label}`}
+          onClick={onCopy}
+        >
+          <Copy size={15} />
+        </Button>
+      </div>
+    </label>
+  );
+}
+
+// Compares what the API is serving with the balance computed from the
+// invoices on screen, so a stale published value is obvious and fixable.
+function BalanceCheck({
+  apiKey,
+  invoices,
+  busy,
+  onResync,
+}: {
+  apiKey: ApiKey;
+  invoices: Invoice[];
+  busy: boolean;
+  onResync: () => void;
+}) {
+  const live = computeBalances(invoices, apiKey.clientId, apiKey.productId);
+  const inSync =
+    live.balance === apiKey.balance &&
+    live.productBalance === apiKey.productBalance &&
+    live.openInvoices === apiKey.openInvoices;
+  const drafts = invoices
+    .filter((i) => i.clientId === apiKey.clientId && i.status === "Draft")
+    .reduce((sum, i) => sum + (Number(i.balanceDue) || 0), 0);
+  const updated = apiKey.updatedAt?.toDate?.();
+
+  return (
+    <div className="grid gap-2 rounded-xl bg-[var(--surface-2)] p-4 text-sm">
+      <div className="flex justify-between gap-3">
+        <span className="text-[var(--muted)]">API is serving</span>
+        <span className="font-semibold">
+          {formatCurrency(apiKey.balance, apiKey.currency)}
+        </span>
+      </div>
+      <div className="flex justify-between gap-3">
+        <span className="text-[var(--muted)]">Live from invoices</span>
+        <span className="font-semibold">
+          {formatCurrency(live.balance, apiKey.currency)}
+        </span>
+      </div>
+      <div className="flex justify-between gap-3">
+        <span className="text-[var(--muted)]">This product&apos;s share</span>
+        <span>{formatCurrency(live.productBalance, apiKey.currency)}</span>
+      </div>
+      {drafts > 0 && (
+        <p className="text-xs text-[var(--muted)]">
+          {formatCurrency(drafts, apiKey.currency)} in draft invoices is not
+          included until they are sent.
+        </p>
+      )}
+      <div className="mt-1 flex items-center justify-between gap-3">
+        <span
+          className={
+            inSync ? "text-xs text-emerald-700" : "text-xs text-red-600"
+          }
+        >
+          {inSync ? "In sync" : "Out of sync"}
+          {updated && ` · last published ${updated.toLocaleString()}`}
+        </span>
+        <Button size="sm" variant="outline" disabled={busy} onClick={onResync}>
+          <RefreshCw size={14} />
+          Resync now
+        </Button>
+      </div>
+    </div>
   );
 }

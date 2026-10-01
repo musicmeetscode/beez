@@ -84,7 +84,8 @@ export function listenByBusiness<T extends { id: string }>(
     | "invoices"
     | "transactions"
     | "contracts"
-    | "clientProducts",
+    | "clientProducts"
+    | "apiKeys",
   businessId: string,
   next: (rows: T[]) => void,
   error: (e: Error) => void,

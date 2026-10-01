@@ -9,7 +9,8 @@ export function useBusinessCollection<T extends { id: string }>(
     | "invoices"
     | "transactions"
     | "contracts"
-    | "clientProducts",
+    | "clientProducts"
+    | "apiKeys",
 ) {
   const { activeBusinessId, businesses } = useBusiness();
   const [data, setData] = useState<T[]>([]);

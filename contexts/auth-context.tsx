@@ -48,6 +48,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(u);
           try {
             if (u?.email) await ensureUser(u.uid, u.email);
+          } catch (error) {
+            // Offline sign-ins restore from cache; the profile syncs next time.
+            console.warn("Could not sync user profile", error);
           } finally {
             setLoading(false);
           }
